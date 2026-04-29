@@ -1,4 +1,4 @@
-# EloTracker Plugin v1.2.2
+# EloTracker Plugin v1.2.3
 
 **SquadJS Plugin for Skill-Based Player Rating**
 

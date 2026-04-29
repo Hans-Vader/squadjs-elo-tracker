@@ -143,7 +143,7 @@ import { EloDiscord } from '../utils/elo-discord.js';
 import EloCommands from '../utils/elo-commands.js';
 
 export default class EloTracker extends BasePlugin {
-  static version = '1.2.2';
+  static version = '1.2.3';
 
   static get description() {
     return 'A SquadJS plugin that tracks player participation across rounds, computes individual ELO ratings using a TrueSkill-based algorithm, and persists all data via SQLite.';
@@ -475,13 +475,20 @@ export default class EloTracker extends BasePlugin {
         .catch((err) => Logger.verbose('EloTracker', 1, `Background fetch failed: ${err.message}`));
     }
 
-    // Delayed Round Start Embed logic
-    if (this._roundStartEmbedPending !== null && Date.now() - this._roundStartEmbedPending >= this.options.roundStartEmbedDelayMs)
-    {
-      this._roundStartEmbedPending = null;
-      if(this.eloCache.size > 0 && allPlayers.length > this.options.minPlayersForElo)
-      {
-        this.sendDelayedStartEmbed();
+    // Delayed Round Start Embed logic — retry on each tick until threshold met or timeout expires
+    if (this._roundStartEmbedPending !== null) {
+      const elapsed = Date.now() - this._roundStartEmbedPending;
+      const maxRetryMs = this.options.roundStartEmbedDelayMs + (10 * 60 * 1000); // delay + 10 min retry window
+
+      if (elapsed >= this.options.roundStartEmbedDelayMs) {
+        if (this.eloCache.size > 0 && allPlayers.length > this.options.minPlayersForElo) {
+          this._roundStartEmbedPending = null; // success — clear and fire
+          this.sendDelayedStartEmbed();
+        } else if (elapsed >= maxRetryMs) {
+          this._roundStartEmbedPending = null; // expired — give up silently
+          Logger.verbose('EloTracker', 1, 'Round start embed abandoned: player count never recovered within retry window.');
+        }
+        // else: still within retry window but below threshold — leave pending and retry next tick
       }
     }
   }
