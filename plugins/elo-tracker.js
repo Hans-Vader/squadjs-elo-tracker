@@ -1005,10 +1005,26 @@ export default class EloTracker extends BasePlugin {
     };
   }
 
-  getMu(player) {
+  async getMu(player) {
     if (!player) return EloCalculator.MU_DEFAULT;
+    
+    // Check cache first
     const cached = this.eloCache.get(player.eosID);
     if (cached) return cached.mu;
+    
+    // Cache miss — fetch from database
+    try {
+      const record = await this.db.getPlayerStats(player.eosID);
+      if (record) {
+        // Populate cache for future calls
+        this.eloCache.set(player.eosID, record);
+        return record.mu;
+      }
+    } catch (err) {
+      Logger.verbose('EloTracker', 1, `[getMu] DB fetch failed for ${player.eosID}: ${err.message}`);
+    }
+    
+    // No record found or fetch failed — return default
     return EloCalculator.MU_DEFAULT;
   }
 
