@@ -1028,6 +1028,36 @@ export default class EloTracker extends BasePlugin {
     return EloCalculator.MU_DEFAULT;
   }
 
+  /**
+   * Retrieves player rating (mu and roundsPlayed) from cache or database.
+   * Mirrors getMu() pattern but returns full rating object for skill + veterancy calculations.
+   *
+   * @param {object} player - Player object with eosID
+   * @returns {Promise<object>} { mu, roundsPlayed } — both with defaults if not found
+   */
+  async getRating(player) {
+    if (!player) return { mu: EloCalculator.MU_DEFAULT, roundsPlayed: 0 };
+    
+    // Check cache first
+    const cached = this.eloCache.get(player.eosID);
+    if (cached) return { mu: cached.mu, roundsPlayed: cached.roundsPlayed ?? 0 };
+    
+    // Cache miss — fetch from database
+    try {
+      const record = await this.db.getPlayerStats(player.eosID);
+      if (record) {
+        // Populate cache for future calls
+        this.eloCache.set(player.eosID, record);
+        return { mu: record.mu, roundsPlayed: record.roundsPlayed ?? 0 };
+      }
+    } catch (err) {
+      Logger.verbose('EloTracker', 1, `[getRating] DB fetch failed for ${player.eosID}: ${err.message}`);
+    }
+    
+    // No record found or fetch failed — return defaults
+    return { mu: EloCalculator.MU_DEFAULT, roundsPlayed: 0 };
+  }
+
   async getRatingsByEosIDs(eosIDs) {
     const results = await this.db.getPlayerStatsBatch(eosIDs);
     return new Map(eosIDs.map(id => [
