@@ -308,6 +308,12 @@ export default class EloDatabase {
            await this.models.RoundPlayers.sync();
         });
 
+      // Log PlayerStats row count on startup to detect silent table recreations
+      const playerStatsCount = await this._executeWithRetry(async () => {
+        return await this.models.PlayerStats.count();
+      }).catch(() => 0);
+      Logger.verbose('EloTracker', 1, `[DB] PlayerStats table initialized: ${playerStatsCount} rows found on startup.`);
+
       const state = await this._executeWithRetry(async () => {
         return await this.sequelize.transaction(async (t) => {
           const [record] = await this.models.PluginState.findOrCreate({
@@ -442,6 +448,10 @@ export default class EloDatabase {
             const { eosID, ...fields } = update;
             const record = existingMap.get(eosID);
             if (record) {
+              // Integrity check: roundsPlayed=0 but mu≠default indicates a column reset
+              if (record.roundsPlayed === 0 && record.mu !== EloCalculator.MU_DEFAULT) {
+                Logger.verbose('EloTracker', 1, `[DB] WARNING: Integrity anomaly for eosID ${eosID} (name: ${record.name}) — roundsPlayed=0 but mu=${record.mu.toFixed(2)} (non-default). Possible column reset detected.`);
+              }
               return record.update({
                 mu: fields.mu,
                 sigma: fields.sigma,
@@ -453,6 +463,7 @@ export default class EloDatabase {
                 steamID: fields.steamID ?? record.steamID
               }, { transaction: t });
             } else {
+              Logger.verbose('EloTracker', 1, `[DB] WARNING: bulkIncrement — eosID ${eosID} not found in DB (name: ${fields.name}), creating new record with wins=${fields.wins ?? 0} losses=${fields.losses ?? 0} roundsPlayed=${fields.roundsPlayed ?? 0}.`);
               return this.models.PlayerStats.create({ eosID, ...fields }, { transaction: t });
             }
           });
@@ -584,6 +595,8 @@ export default class EloDatabase {
      if (!this.sequelize) return null;
      const CHUNK_SIZE = 500;
      try {
+       Logger.verbose('EloTracker', 1, `[DB] Import started: ${records.length} players to restore.`);
+       
        for (let i = 0; i < records.length; i += CHUNK_SIZE) {
          const chunk = records.slice(i, i + CHUNK_SIZE);
          await this._executeWithRetry(async () => {
@@ -607,6 +620,25 @@ export default class EloDatabase {
            });
          });
        }
+       
+       // Log post-import row count and spot-check a sample record
+       const postImportCount = await this._executeWithRetry(async () => {
+         return await this.models.PlayerStats.count();
+       }).catch(() => 0);
+       
+       let sampleRecord = null;
+       if (records.length > 0) {
+         sampleRecord = await this._executeWithRetry(async () => {
+           return await this.models.PlayerStats.findOne({ where: { eosID: records[0].eosID } });
+         }).catch(() => null);
+       }
+       
+       if (sampleRecord) {
+         Logger.verbose('EloTracker', 1, `[DB] Import complete: ${postImportCount} total rows. Sample check: eosID=${sampleRecord.eosID} wins=${sampleRecord.wins} losses=${sampleRecord.losses} roundsPlayed=${sampleRecord.roundsPlayed}.`);
+       } else {
+         Logger.verbose('EloTracker', 1, `[DB] Import complete: ${postImportCount} total rows.`);
+       }
+       
        return true;
      } catch (error) {
        Logger.verbose('EloTracker', 1, `[DB] Error importing stats: ${error.message}`);
@@ -619,6 +651,8 @@ export default class EloDatabase {
     const now = Date.now();
     const thirtyDays = 30 * 24 * 60 * 60 * 1000;
     const ninetyDays = 90 * 24 * 60 * 60 * 1000;
+    const tier1Cutoff = new Date(now - thirtyDays).toISOString();
+    const tier2Cutoff = new Date(now - ninetyDays).toISOString();
 
     try {
       const tier1Count = await this._executeWithRetry(async () => {
@@ -639,6 +673,7 @@ export default class EloDatabase {
         });
       });
 
+      Logger.verbose('EloTracker', 1, `[DB] Pruned stale entries — Tier 1 (provisional unseen since ${tier1Cutoff}): ${tier1Count} deleted. Tier 2 (calibrated unseen since ${tier2Cutoff}): ${tier2Count} deleted.`);
       return { tier1: tier1Count, tier2: tier2Count };
     } catch (error) {
       Logger.verbose('EloTracker', 1, `[DB] Error pruning stale entries: ${error.message}`);
