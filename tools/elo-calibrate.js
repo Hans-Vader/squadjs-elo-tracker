@@ -3,8 +3,19 @@
  * ║                      ELO CALIBRATOR                           ║
  * ╚═══════════════════════════════════════════════════════════════╝
  *
- * Calibrates TrueSkill parameters (BETA, TAU) against historical
- * match data via grid search, minimising weighted log-loss.
+ * Calibrates rating parameters against historical match data via grid
+ * search, minimising weighted log-loss.
+ *
+ * Stage 1: classic BETA × TAU sweep (unchanged objective/diagnostics).
+ * Stage 2: TrueSkill2 sweep of the three parameters worth tuning at this
+ *          data scale — quitParams.mQ, experienceOffsets[0] (new-player
+ *          drift, decaying to 0 by 50 games) and squadOffsets[3]
+ *          (4-stack boost) — run at the stage-1 winner's BETA/TAU.
+ *          Each dimension only activates when the log actually contains
+ *          the corresponding observations (quit flags / squad sizes);
+ *          zero is always in the grid so "feature off" can win.
+ *          Kill/death weights are deliberately NOT swept — they need far
+ *          more data than a single server produces; leave them neutral.
  *
  * Usage: node elo-calibrate.js <matchlog.jsonl> <db-backup.json>
  */
@@ -12,6 +23,8 @@
 import readline from 'readline';
 import fs from 'fs';
 import EloCalculator from '../utils/elo-calculator.js';
+import { computeRoundUpdate } from '../utils/elo-trueskill2-engine.js';
+import { loadParameters } from '../utils/elo-parameters.js';
 
 const jsonlPath = process.argv[2];
 const dbPath    = process.argv[3];
@@ -74,9 +87,20 @@ rl.on('line', (line) => {
 });
 
 // --- Win probability ---
-function winProbability(team1, team2, BETA) {
+// `parameters` is a loadParameters() object; squadOffsets shift the predicted
+// team means exactly as in the engine (paper eq. 7 applies to matchmaking
+// predictions too). `perPlayerMeta` supplies squad sizes when available.
+function winProbability(team1, team2, parameters, perPlayerMeta = {}) {
+  const BETA = parameters.beta;
   const getRatio = (p) => p.participationRatio ?? 1.0;
-  
+
+  const squadShiftOf = (p) => {
+    const offsets = parameters.squadOffsets;
+    const size = perPlayerMeta[p.eosID]?.squadSize ?? 1;
+    const idx = Math.min(Math.max(size - 1, 0), offsets.length - 1);
+    return offsets[idx] ?? 0;
+  };
+
   let effectiveN1  = team1.reduce((s, p) => s + getRatio(p), 0);
   let effectiveN2  = team2.reduce((s, p) => s + getRatio(p), 0);
 
@@ -86,27 +110,31 @@ function winProbability(team1, team2, BETA) {
   effectiveN1 *= scale1;
   effectiveN2 *= scale2;
 
-  const teamMu1      = team1.reduce((s, p) => s + p.mu * getRatio(p), 0) * scale1;
-  const teamMu2      = team2.reduce((s, p) => s + p.mu * getRatio(p), 0) * scale2;
-  
+  const teamMu1      = team1.reduce((s, p) => s + (p.mu + squadShiftOf(p)) * getRatio(p), 0) * scale1;
+  const teamMu2      = team2.reduce((s, p) => s + (p.mu + squadShiftOf(p)) * getRatio(p), 0) * scale2;
+
   const teamSigmaSq1 = team1.reduce((s, p) => s + (p.sigma * p.sigma + BETA * BETA) * getRatio(p), 0) * scale1;
   const teamSigmaSq2 = team2.reduce((s, p) => s + (p.sigma * p.sigma + BETA * BETA) * getRatio(p), 0) * scale2;
   const c            = Math.sqrt(teamSigmaSq1 + teamSigmaSq2);
-  
+
   const nTotal       = effectiveN1 + effectiveN2;
-  const epsilon      = Math.sqrt(nTotal) * BETA * Math.SQRT2 * EloCalculator._erfInv(0.01);
+  const epsilon      = Math.sqrt(nTotal) * BETA * Math.SQRT2 * EloCalculator._erfInv(parameters.drawProbability);
   const t            = (teamMu1 - teamMu2) / c;
   return EloCalculator._cdf(t - epsilon / c);
 }
 
 // --- Replay ---
-function replayMatches(matches, BETA, TAU) {
-  EloCalculator.BETA = BETA;
-  EloCalculator.TAU  = TAU;
+// overrides: loadParameters() overrides (e.g. { beta, tau, quitParams: { mQ } }).
+// options.applyQuit: feed logged quit flags to the engine (stage-2 mQ sweep).
+function replayMatches(matches, overrides = {}, options = {}) {
+  const parameters = loadParameters(overrides);
+  const applyQuit  = options.applyQuit ?? false;
 
   const ratings   = new Map();
   const getRating = (eosID) => {
-    if (!ratings.has(eosID)) ratings.set(eosID, EloCalculator.getDefaultRating());
+    if (!ratings.has(eosID)) {
+      ratings.set(eosID, { mu: parameters.mu0, sigma: Math.sqrt(parameters.v0), roundsPlayed: 0 });
+    }
     return ratings.get(eosID);
   };
 
@@ -116,14 +144,30 @@ function replayMatches(matches, BETA, TAU) {
   for (const match of matches) {
     const { matchId, outcome, weight, team1, team2 } = match;
 
-    const t1ratings = team1.map(p => ({ eosID: p.eosID, ...getRating(p.eosID) }));
-    const t2ratings = team2.map(p => ({ eosID: p.eosID, ...getRating(p.eosID) }));
+    const t1ratings = team1.map(p => ({ eosID: p.eosID, mu: getRating(p.eosID).mu, sigma: getRating(p.eosID).sigma }));
+    const t2ratings = team2.map(p => ({ eosID: p.eosID, mu: getRating(p.eosID).mu, sigma: getRating(p.eosID).sigma }));
 
-    const pTeam1 = Math.min(0.999, Math.max(0.001, winProbability(t1ratings, t2ratings, BETA)));
+    // TrueSkill2 observations from the log (absent on pre-upgrade records —
+    // the corresponding factors stay inert for those rounds).
+    const durMin = (match.roundDuration ?? 0) / 60000;
+    const perPlayerMeta = {};
+    for (const p of match.players) {
+      perPlayerMeta[p.eosID] = {
+        squadID: p.squadID ?? 0,
+        squadSize: p.squadSize ?? 1,
+        experience: getRating(p.eosID).roundsPlayed,
+        kills: p.kills,
+        deaths: p.deaths,
+        timePlayedMin: durMin * (p.participationRatio ?? 1),
+        quit: applyQuit ? (p.quit ?? false) : false
+      };
+    }
+
+    const pTeam1 = Math.min(0.999, Math.max(0.001, winProbability(t1ratings, t2ratings, parameters, perPlayerMeta)));
     const p      = outcome === 'team1win' ? pTeam1 : 1 - pTeam1;
     totalLoss   += -Math.log(p) * weight;
 
-    const { team1Updates, team2Updates } = EloCalculator.computeTeamUpdate(t1ratings, t2ratings, outcome);
+    const { team1Updates, team2Updates } = computeRoundUpdate(t1ratings, t2ratings, outcome, perPlayerMeta, parameters);
 
     const applyUpdates = (players, updates) => {
       for (let i = 0; i < players.length; i++) {
@@ -132,6 +176,7 @@ function replayMatches(matches, BETA, TAU) {
         const rating      = getRating(players[i].eosID);
         rating.mu        += updates[i].deltaMu    * ratio;
         rating.sigma      = Math.max(rating.sigma - updates[i].deltaSigma * ratio, 0.5);
+        rating.roundsPlayed += 1;
       }
     };
 
@@ -220,7 +265,7 @@ function gridSearch(matches) {
     for (const TAU of taus) {
       n++;
       process.stdout.write(`\rTesting BETA=${BETA.toFixed(2)} TAU=${TAU.toFixed(4)} (${n}/${total})...`);
-      const { totalLoss, adjustedLoss, calibPenalty, games } = replayMatches(matches, BETA, TAU);
+      const { totalLoss, adjustedLoss, calibPenalty, games } = replayMatches(matches, { beta: BETA, tau: TAU });
       results.push({ BETA, TAU, totalLoss, adjustedLoss, calibPenalty, games });
     }
   }
@@ -228,6 +273,48 @@ function gridSearch(matches) {
   process.stdout.write('\n');
   results.sort((a, b) => a.adjustedLoss - b.adjustedLoss);
   return results.slice(0, 10);
+}
+
+// --- Stage 2: TrueSkill2 sweep at fixed BETA/TAU ---
+function ts2GridSearch(matches, BETA, TAU) {
+  const hasQuit  = matches.some(m => m.players.some(p => p.quit === true));
+  const hasSquad = matches.some(m => m.players.some(p => (p.squadSize ?? 1) > 1));
+
+  const mQs = hasQuit  ? [0, -1.0, -2.083, -3.0] : [0];   // 0 ⇒ quit factor off (applyQuit=false)
+  const e0s = [0, 0.1, 0.2, 0.4];                          // new-player drift, decays to 0 by game 50
+  const s4s = hasSquad ? [0, 0.5, 0.83, 1.2] : [0];        // 4-stack boost
+
+  if (!hasQuit)  console.log('  (no quit flags in log — skipping mQ sweep)');
+  if (!hasSquad) console.log('  (no squad sizes in log — skipping squadOffset sweep)');
+
+  const results = [];
+  const total = mQs.length * e0s.length * s4s.length;
+  let n = 0;
+
+  for (const mQ of mQs) {
+    for (const e0 of e0s) {
+      for (const s4 of s4s) {
+        n++;
+        process.stdout.write(`\rTS2 sweep mQ=${mQ} e0=${e0} s4=${s4} (${n}/${total})...`);
+        const experienceOffsets = Array.from({ length: 200 }, (_, i) => (i < 50 ? e0 * (1 - i / 50) : 0));
+        // Linear squad-offset curve anchored at the swept 4-stack value
+        const squadOffsets = Array.from({ length: 10 }, (_, i) => (i < 1 ? 0 : (s4 / 3) * i));
+        const overrides = {
+          beta: BETA,
+          tau: TAU,
+          experienceOffsets,
+          squadOffsets,
+          quitParams: { mQ: mQ === 0 ? -2.083 : mQ, vQ: 1.0 }
+        };
+        const { totalLoss, adjustedLoss, calibPenalty, games } =
+          replayMatches(matches, overrides, { applyQuit: hasQuit && mQ !== 0 });
+        results.push({ mQ, e0, s4, totalLoss, adjustedLoss, calibPenalty, games });
+      }
+    }
+  }
+  process.stdout.write('\n');
+  results.sort((a, b) => a.adjustedLoss - b.adjustedLoss);
+  return results;
 }
 
 // --- Diagnostic ---
@@ -268,7 +355,7 @@ rl.on('close', () => {
   console.log(`Weighted: ${weightedCount} rated games (weight=3), ${matches.length - weightedCount} unrated (weight=1)`);
 
   // Smoke test
-  const { totalLoss: smokeLoss, adjustedLoss: smokeAdjLoss, games: smokeGames } = replayMatches(matches, 25 / 6, 25 / 300);
+  const { totalLoss: smokeLoss, adjustedLoss: smokeAdjLoss, games: smokeGames } = replayMatches(matches, { beta: 25 / 6, tau: 25 / 300 });
   const smokeAcc = (smokeGames.filter(g => g.correct).length / smokeGames.length * 100).toFixed(1);
   console.log(`\nSmoke test (default params): loss=${smokeLoss.toFixed(4)}, accuracy=${smokeAcc}%`);
 
@@ -311,5 +398,42 @@ rl.on('close', () => {
   for (let i = 0; i < top10.length; i++) {
     const r = top10[i];
     printBoth(r.games, `#${i + 1} BETA=${r.BETA} TAU=${r.TAU} (adj=${r.adjustedLoss.toFixed(2)})`);
+  }
+
+  // --- Stage 2: TrueSkill2 parameters at the stage-1 winner ---
+  const bestBeta = top10[0].BETA;
+  const bestTau  = top10[0].TAU;
+  console.log(`\n=== STAGE 2: TRUESKILL2 SWEEP (BETA=${bestBeta}, TAU=${bestTau}) ===\n`);
+  const ts2Results = ts2GridSearch(matches, bestBeta, bestTau);
+
+  console.log(`\n${'Rank'.padEnd(6)} ${'mQ'.padEnd(8)} ${'exp0'.padEnd(8)} ${'squad4'.padEnd(8)} ${'RawLoss'.padEnd(12)} ${'AdjLoss'.padEnd(12)} ${'Acc%'}`);
+  console.log('─'.repeat(64));
+  for (let i = 0; i < Math.min(10, ts2Results.length); i++) {
+    const r = ts2Results[i];
+    const acc = (r.games.filter(g => g.correct).length / r.games.length * 100).toFixed(1);
+    console.log(
+      `${String(i + 1).padEnd(6)} ${String(r.mQ).padEnd(8)} ${String(r.e0).padEnd(8)} ${String(r.s4).padEnd(8)} ` +
+      `${r.totalLoss.toFixed(2).padEnd(12)} ${r.adjustedLoss.toFixed(2).padEnd(12)} ${acc}`
+    );
+  }
+
+  const best = ts2Results[0];
+  console.log(`\nRecommended plugin config (paste into the EloTracker options):\n`);
+  console.log(JSON.stringify({
+    trueskill2: {
+      beta: bestBeta,
+      tau: bestTau,
+      ...(best.e0 !== 0 && {
+        experienceOffsets: Array.from({ length: 50 }, (_, i) => parseFloat((best.e0 * (1 - i / 50)).toFixed(4)))
+      }),
+      ...(best.s4 !== 0 && {
+        squadOffsets: Array.from({ length: 10 }, (_, i) => parseFloat((i < 1 ? 0 : (best.s4 / 3) * i).toFixed(4)))
+      }),
+      ...(best.mQ !== 0 && { quitParams: { mQ: best.mQ, vQ: 1.0 } })
+    },
+    ...(best.mQ !== 0 && { enableQuitPenalty: true })
+  }, null, 2));
+  if (best.mQ === 0 && best.e0 === 0 && best.s4 === 0) {
+    console.log('(All TrueSkill2 factors calibrate to OFF on this log — keep neutral defaults.)');
   }
 });
