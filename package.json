@@ -1,0 +1,13 @@
+{
+  "name": "squadjs-elo-tracker",
+  "private": true,
+  "type": "module",
+  "description": "Dev harness for the SquadJS ELO tracker plugin. In production the plugin runs inside SquadJS, which provides its own module context and dependencies.",
+  "scripts": {
+    "test": "node testing/run-all-tests.js"
+  },
+  "devDependencies": {
+    "sequelize": "^6.37.0",
+    "sqlite3": "^5.1.7"
+  }
+}
