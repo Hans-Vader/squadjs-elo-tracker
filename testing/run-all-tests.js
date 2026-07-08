@@ -1,5 +1,11 @@
 import { fileURLToPath } from 'url';
+import { register } from 'node:module';
 import fs from 'fs';
+
+// Redirect SquadJS-core imports (base-plugin.js, core/logger.js) to testing/stubs/
+// when the real files are absent — lets the tracker/database suites run from this
+// repo instead of only inside a SquadJS deployment. See testing/dev-loader.mjs.
+register('./dev-loader.mjs', import.meta.url);
 
 const COLORS = {
   RESET: '\x1b[0m',
@@ -35,6 +41,7 @@ export async function runAll() {
 
   const suites = [
     { name: 'EloCalculator', file: './test-elo-calculator.js' },
+    { name: 'EloParameters', file: './test-elo-parameters.js' },
     { name: 'EloSessionManager', file: './test-elo-session-manager.js' },
     { name: 'EloDatabase', file: './test-elo-database.js' },
     { name: 'EloTracker', file: './test-elo-tracker.js' },
