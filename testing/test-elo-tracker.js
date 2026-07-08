@@ -265,6 +265,25 @@ export default async function runTrackerTests(runTest) {
     if (quitters.has('s')) throw new Error('S (full round, present at end) must NOT be a quitter');
   });
 
+  await runTest('PerPlayerMeta: squadSize counted per (team, dominantSquad); squad 0 is solo', async () => {
+    const { tracker } = await makeTrackerForTest();
+    const participants = [
+      { eosID: 'a', assignedTeamID: 1, dominantSquadID: 2, participationRatio: 1 },
+      { eosID: 'b', assignedTeamID: 1, dominantSquadID: 2, participationRatio: 1 },
+      { eosID: 'c', assignedTeamID: 1, dominantSquadID: 2, participationRatio: 0.1 }, // ineligible but still in the squad
+      { eosID: 'd', assignedTeamID: 2, dominantSquadID: 2, participationRatio: 1 },  // same squad number, other team
+      { eosID: 'e', assignedTeamID: 2, dominantSquadID: 0, participationRatio: 1 }   // unassigned
+    ];
+    const eligible = participants.filter((p) => p.participationRatio >= 0.15);
+    const meta = tracker._buildPerPlayerMeta(participants, eligible);
+
+    if (meta.a.squadSize !== 3) throw new Error(`a: squad of 3 expected, got ${meta.a.squadSize}`);
+    if (meta.a.squadID !== 2) throw new Error(`a: squadID 2 expected, got ${meta.a.squadID}`);
+    if (meta.d.squadSize !== 1) throw new Error(`d: same squadID on other team must not merge, got ${meta.d.squadSize}`);
+    if (meta.e.squadSize !== 1) throw new Error(`e: unassigned counts as solo, got ${meta.e.squadSize}`);
+    if (meta.c) throw new Error('ineligible players get no meta entry');
+  });
+
   await runTest('Quit detection: low participation but recently seen is NOT a quit', async () => {
     const { tracker } = await makeTrackerForTest();
     const EloSessionManager = (await import('../utils/elo-session-manager.js')).default;

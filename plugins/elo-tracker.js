@@ -144,6 +144,7 @@ import EloCalculator from '../utils/elo-calculator.js';
 import { EloDiscord } from '../utils/elo-discord.js';
 import EloCommands from '../utils/elo-commands.js';
 import { loadParameters } from '../utils/elo-parameters.js';
+import { computeRoundUpdate } from '../utils/elo-trueskill2-engine.js';
 
 export default class EloTracker extends BasePlugin {
   static version = '1.3.0';
@@ -593,6 +594,36 @@ export default class EloTracker extends BasePlugin {
   }
 
   /**
+   * Build the per-player TrueSkill2 observation map for the engine.
+   * Squad size counts ALL round participants sharing (assignedTeamID,
+   * dominantSquadID) — including ones below the ELO eligibility floor —
+   * because they were really in that squad. Squad 0 (unassigned) is solo.
+   *
+   * @param {Array} participants  full endRound() output
+   * @param {Array} eligible      participants above minParticipationRatio
+   * @returns {Object} eosID → { squadID, squadSize }
+   */
+  _buildPerPlayerMeta(participants, eligible) {
+    const squadCounts = new Map(); // "teamID:squadID" → member count
+    for (const p of participants) {
+      const sid = p.dominantSquadID ?? 0;
+      if (sid === 0) continue;
+      const key = `${p.assignedTeamID}:${sid}`;
+      squadCounts.set(key, (squadCounts.get(key) ?? 0) + 1);
+    }
+
+    const perPlayerMeta = {};
+    for (const p of eligible) {
+      const sid = p.dominantSquadID ?? 0;
+      perPlayerMeta[p.eosID] = {
+        squadID: sid,
+        squadSize: sid === 0 ? 1 : (squadCounts.get(`${p.assignedTeamID}:${sid}`) ?? 1)
+      };
+    }
+    return perPlayerMeta;
+  }
+
+  /**
    * Detect quitters at round end: participation below the threshold AND absent
    * from the server for longer than the grace window.
    *
@@ -807,11 +838,16 @@ export default class EloTracker extends BasePlugin {
       return;
     }
 
-    // --- Run TrueSkill ---
-    const { team1Updates, team2Updates } = EloCalculator.computeTeamUpdate(
-      team1Eligible.map(p => ({ ...getRating(p.eosID), participationRatio: p.participationRatio })),
-      team2Eligible.map(p => ({ ...getRating(p.eosID), participationRatio: p.participationRatio })),
-      outcome
+    // --- Run TrueSkill2 ---
+    // With neutral (default) this.params this is numerically identical to the
+    // old EloCalculator.computeTeamUpdate path (golden-tested).
+    const perPlayerMeta = this._buildPerPlayerMeta(participants, eligible);
+    const { team1Updates, team2Updates } = computeRoundUpdate(
+      team1Eligible.map(p => ({ eosID: p.eosID, ...getRating(p.eosID), participationRatio: p.participationRatio })),
+      team2Eligible.map(p => ({ eosID: p.eosID, ...getRating(p.eosID), participationRatio: p.participationRatio })),
+      outcome,
+      perPlayerMeta,
+      this.params
     );
 
     const team1RatingsBefore = team1Eligible.map(p => getRating(p.eosID));
