@@ -67,7 +67,7 @@ export default class EloSessionManager {
    * Handles joins, team switches, and disconnects.
    * If a player is no longer in the snapshot, their segment is closed.
    * 
-   * @param {Array<{eosID: string, name: string, steamID: string, teamID: number}>} currentPlayers 
+   * @param {Array<{eosID: string, name: string, steamID: string, teamID: number, squadID: number|null}>} currentPlayers
    */
   updatePlayers(currentPlayers, timestamp = Date.now()) {
     if (!this.roundStartTime) return;
@@ -76,17 +76,21 @@ export default class EloSessionManager {
 
     for (const player of currentPlayers) {
       const { eosID, name, steamID, teamID } = player;
+      // "No squad" surfaces as null from RCON; normalize to 0 so segment
+      // comparisons never mix null and 0 (which would roll spurious segments).
+      const squadID = player.squadID ?? 0;
       currentPlayerIDs.add(eosID);
 
        if (!this.sessions.has(eosID)) {
          // Condition: eosID in currentPlayers, not in session map
          // Action: Open new segment
-         // NOTE (null-teamID transient): teamID may be null if RCON hasn't resolved team 
-         // assignment yet (especially at NEW_GAME transition; see 
-         // SQUADJS_PLUGIN_DEV_REFERENCE.md Section 3). A null segment will be created here 
+         // NOTE (null-teamID transient): teamID may be null if RCON hasn't resolved team
+         // assignment yet (especially at NEW_GAME transition; see
+         // SQUADJS_PLUGIN_DEV_REFERENCE.md Section 3). A null segment will be created here
          // and later closed when teamID resolves to 1 or 2. This is expected behaviour.
          const newSegment = {
            teamID: teamID,
+           squadID: squadID,
            joinTime: timestamp,
            leaveTime: null
          };
@@ -111,22 +115,27 @@ export default class EloSessionManager {
           // activeSegment is null — reopen a segment for this player
           const newSegment = {
             teamID: teamID,
+            squadID: squadID,
             joinTime: timestamp,
             leaveTime: null
           };
           session.segments.push(newSegment);
           session.activeSegment = newSegment;
-         } else if (session.activeSegment.teamID !== teamID) {
-           // Action: Team changed -> Close active segment, open new segment
-           // NOTE (null-teamID transient): This branch also fires when teamID transitions 
-           // from null → 1/2 (the expected null-teamID resolution case). The null segment 
-           // is closed and a valid segment opened. Any time the player spent in the null state 
-           // (~30–35s at NEW_GAME) contributes nothing to participationRatio and is effectively 
+         } else if (
+           session.activeSegment.teamID !== teamID ||
+           (session.activeSegment.squadID ?? 0) !== squadID
+         ) {
+           // Action: Team or squad changed -> Close active segment, open new segment
+           // NOTE (null-teamID transient): This branch also fires when teamID transitions
+           // from null → 1/2 (the expected null-teamID resolution case). The null segment
+           // is closed and a valid segment opened. Any time the player spent in the null state
+           // (~30–35s at NEW_GAME) contributes nothing to participationRatio and is effectively
            // discarded. This is acceptable given the negligible impact (<1% of round duration).
            session.activeSegment.leaveTime = timestamp;
 
            const newSegment = {
              teamID: teamID,
+             squadID: squadID,
              joinTime: timestamp,
              leaveTime: null
            };
@@ -134,7 +143,7 @@ export default class EloSessionManager {
            session.segments.push(newSegment);
            session.activeSegment = newSegment;  // set current
          }
-        // Condition: Team unchanged -> No action
+        // Condition: Team and squad unchanged -> No action
       }
     }
 
@@ -152,27 +161,52 @@ export default class EloSessionManager {
 
   /**
    * Ends the round, closes all segments, and calculates participation.
-   * @param {number} timestamp 
+   * @param {number} timestamp
    * @returns {Array<Object>} ParticipantList
    */
   endRound(timestamp = Date.now()) {
     if (!this.roundStartTime) return [];
 
+    // Close any still-open active segments, then compute.
+    for (const session of this.sessions.values()) {
+      if (session.activeSegment && session.activeSegment.leaveTime === null) {
+        session.activeSegment.leaveTime = timestamp;
+      }
+    }
+
+    return this._computeParticipants(timestamp);
+  }
+
+  /**
+   * Non-destructive mid-round read of the participant list.
+   * Same shape as endRound() but never mutates segments/activeSegment
+   * (segments are shared by reference with activeSegment — closing them
+   * here would corrupt a later real endRound()).
+   *
+   * @param {number} timestamp
+   * @returns {Array<Object>} ParticipantList
+   */
+  snapshotParticipants(timestamp = Date.now()) {
+    if (!this.roundStartTime) return [];
+    return this._computeParticipants(timestamp);
+  }
+
+  /**
+   * Shared participation computation. Open segments (leaveTime === null)
+   * are counted up to `timestamp` WITHOUT being mutated.
+   * @private
+   */
+  _computeParticipants(timestamp) {
     const roundDuration = Math.max(1, timestamp - this.roundStartTime);
     const participants = [];
 
     for (const session of this.sessions.values()) {
-      // Close active segment if it's still open
-      if (session.activeSegment && session.activeSegment.leaveTime === null) {
-        session.activeSegment.leaveTime = timestamp;
-      }
-
       // Compute participation
       let timeOnTeam1 = 0;
       let timeOnTeam2 = 0;
 
       for (const segment of session.segments) {
-        // Safety: if leaveTime is null (shouldn't be after above), use timestamp
+        // Open segments are counted up to `timestamp` (never mutated here)
         const endTime = segment.leaveTime !== null ? segment.leaveTime : timestamp;
         const duration = Math.max(0, endTime - segment.joinTime);
 
@@ -203,11 +237,31 @@ export default class EloSessionManager {
       let participationRatio = timeOnAssigned / roundDuration;
       participationRatio = Math.min(Math.max(participationRatio, 0.0), 1.0);
 
+      // Dominant squad = squad with the most time among segments on the
+      // assigned team ("no squad" counts as squad 0).
+      const timeBySquad = new Map();
+      for (const segment of session.segments) {
+        if (segment.teamID !== assignedTeamID) continue;
+        const endTime = segment.leaveTime !== null ? segment.leaveTime : timestamp;
+        const duration = Math.max(0, endTime - segment.joinTime);
+        const sid = segment.squadID ?? 0;
+        timeBySquad.set(sid, (timeBySquad.get(sid) ?? 0) + duration);
+      }
+      let dominantSquadID = 0;
+      let dominantTime = -1;
+      for (const [sid, t] of timeBySquad) {
+        if (t > dominantTime) {
+          dominantTime = t;
+          dominantSquadID = sid;
+        }
+      }
+
       participants.push({
         eosID: session.eosID,
         name: session.name,
         steamID: session.steamID,
         assignedTeamID,
+        dominantSquadID,
         participationRatio,
         timeOnTeam1,
         timeOnTeam2,
