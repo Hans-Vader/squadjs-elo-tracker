@@ -1,5 +1,7 @@
 # TrueSkill2 Upgrade Implementation Plan
 
+> **Status: IMPLEMENTED** (2026-07-09, branch `trueskill2`). All 12 tasks executed per the Amendments section below; every suite in `testing/run-all-tests.js` green.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace the closed-form TrueSkill (Herbrich 2007) update in `utils/elo-calculator.js` with a TrueSkill2 implementation (Minka, Cleven & Zaykov 2018) that adds squad offsets, experience-based skill drift, a quit-penalty factor, and individual kill/death statistics as Bayesian observations.
