@@ -284,6 +284,18 @@ export default async function runTrackerTests(runTest) {
     if (meta.c) throw new Error('ineligible players get no meta entry');
   });
 
+  await runTest('PerPlayerMeta: experience = pre-round roundsPlayed (new player ⇒ 0)', async () => {
+    const { tracker } = await makeTrackerForTest();
+    tracker.eloCache.set('vet', { mu: 30, sigma: 3, roundsPlayed: 42, wins: 25, losses: 17 });
+    const participants = [
+      { eosID: 'vet', assignedTeamID: 1, dominantSquadID: 0, participationRatio: 1 },
+      { eosID: 'newbie', assignedTeamID: 2, dominantSquadID: 0, participationRatio: 1 }
+    ];
+    const meta = tracker._buildPerPlayerMeta(participants, participants);
+    if (meta.vet.experience !== 42) throw new Error(`vet experience should be 42, got ${meta.vet.experience}`);
+    if (meta.newbie.experience !== 0) throw new Error(`uncached player experience should be 0, got ${meta.newbie.experience}`);
+  });
+
   await runTest('Quit detection: low participation but recently seen is NOT a quit', async () => {
     const { tracker } = await makeTrackerForTest();
     const EloSessionManager = (await import('../utils/elo-session-manager.js')).default;
