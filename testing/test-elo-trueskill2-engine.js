@@ -254,6 +254,78 @@ export default async function runEngineTests(runTest) {
     }
   });
 
+  // --- Kill/death individual-statistics factor (paper eq. 9) ---
+
+  const TUNED_KD = loadParameters({
+    killParams: { wPlayer: 0.1, wOpponent: -0.05, variance: 0.5 },
+    deathParams: { wPlayer: -0.05, wOpponent: 0.1, variance: 0.5 }
+  });
+
+  await runTest('KD factor: high-scorer gains more than low-scorer on the same win', async () => {
+    const t1 = [
+      { eosID: 'A', mu: 25, sigma: 8.333, participationRatio: 1 },
+      { eosID: 'B', mu: 25, sigma: 8.333, participationRatio: 1 }
+    ];
+    const t2 = four('e').slice(0, 2);
+    const meta = {
+      A: { kills: 25, deaths: 5, timePlayedMin: 20 },
+      B: { kills: 5, deaths: 25, timePlayedMin: 20 },
+      e0: { kills: 10, deaths: 10, timePlayedMin: 20 },
+      e1: { kills: 10, deaths: 10, timePlayedMin: 20 }
+    };
+    const r = computeRoundUpdate(t1, t2, 'team1win', meta, TUNED_KD);
+    const baseline = computeRoundUpdate(t1, t2, 'team1win', {}, TUNED_KD);
+    // Guaranteed model property: better stats ⇒ strictly better update.
+    // (Note: A-vs-baseline is NOT guaranteed — even at-expectation stats add
+    // precision anchored near the current mu, damping the win bonus.)
+    if (r.team1Updates[0].deltaMu <= r.team1Updates[1].deltaMu) {
+      throw new Error('high-scorer A must gain more than under-performer B on the same win');
+    }
+    if (r.team1Updates[1].deltaMu >= baseline.team1Updates[1].deltaMu) {
+      throw new Error('under-performer B must trail the no-stats baseline');
+    }
+  });
+
+  await runTest('KD factor: high-scorer loses less on the same defeat', async () => {
+    const t1 = [
+      { eosID: 'A', mu: 25, sigma: 8.333, participationRatio: 1 },
+      { eosID: 'B', mu: 25, sigma: 8.333, participationRatio: 1 }
+    ];
+    const t2 = four('e').slice(0, 2);
+    const meta = {
+      A: { kills: 30, deaths: 5, timePlayedMin: 20 },
+      B: { kills: 5, deaths: 30, timePlayedMin: 20 }
+    };
+    const r = computeRoundUpdate(t1, t2, 'team2win', meta, TUNED_KD);
+    if (r.team1Updates[0].deltaMu <= r.team1Updates[1].deltaMu) {
+      throw new Error('high-scorer must lose less than under-performer on the same loss');
+    }
+  });
+
+  await runTest('KD factor: missing stats leave the update identical to baseline', async () => {
+    const t1 = [{ eosID: 'a', mu: 25, sigma: 8.333, participationRatio: 1 }];
+    const t2 = [{ eosID: 'b', mu: 25, sigma: 8.333, participationRatio: 1 }];
+    const baseline = computeRoundUpdate(t1, t2, 'team1win', {}, TUNED_KD);
+    const withEmptyMeta = computeRoundUpdate(t1, t2, 'team1win', { a: { squadSize: 1 }, b: { squadSize: 1 } }, TUNED_KD);
+    if (Math.abs(baseline.team1Updates[0].deltaMu - withEmptyMeta.team1Updates[0].deltaMu) > 1e-9) {
+      throw new Error('meta without kills/timePlayedMin must not change the update');
+    }
+  });
+
+  await runTest('KD factor: neutral DEFAULT_PARAMETERS ignore kill/death stats', async () => {
+    const t1 = [{ eosID: 'a', mu: 25, sigma: 8.333, participationRatio: 1 }];
+    const t2 = [{ eosID: 'b', mu: 25, sigma: 8.333, participationRatio: 1 }];
+    const r0 = computeRoundUpdate(t1, t2, 'team1win', {}, DEFAULT_PARAMETERS);
+    const r1 = computeRoundUpdate(
+      t1, t2, 'team1win',
+      { a: { kills: 50, deaths: 0, timePlayedMin: 20 }, b: { kills: 0, deaths: 50, timePlayedMin: 20 } },
+      DEFAULT_PARAMETERS
+    );
+    if (Math.abs(r0.team1Updates[0].deltaMu - r1.team1Updates[0].deltaMu) > 1e-9) {
+      throw new Error('neutral DEFAULT_PARAMETERS must ignore kill/death stats');
+    }
+  });
+
   await runTest('Wrapper honors runtime BETA/TAU mutation (calibrator contract)', async () => {
     const betaBefore = EloCalculator.BETA;
     const tauBefore = EloCalculator.TAU;

@@ -19,7 +19,8 @@ import {
   toMuSigma,
   combineMessages,
   teamFactorMessages,
-  quitFactorMessage
+  quitFactorMessage,
+  killDeathFactorMessage
 } from './elo-trueskill2-factors.js';
 
 /**
@@ -99,6 +100,21 @@ export function computeRoundUpdate(team1, team2, outcome, perPlayerMeta, paramet
 
     if (meta.quit) {
       messages.push(quitFactorMessage(player, opponentMu, opponentVar, parameters));
+    }
+
+    // Kill/death observations (eq. 9) need a play-time to normalize against.
+    const tp = meta.timePlayedMin;
+    if (tp > 0) {
+      if (Number.isFinite(meta.kills)) {
+        messages.push(
+          killDeathFactorMessage(player, meta.kills, opponentMu, opponentVar, tp, parameters.killParams, parameters)
+        );
+      }
+      if (Number.isFinite(meta.deaths)) {
+        messages.push(
+          killDeathFactorMessage(player, meta.deaths, opponentMu, opponentVar, tp, parameters.deathParams, parameters)
+        );
+      }
     }
     return messages;
   };

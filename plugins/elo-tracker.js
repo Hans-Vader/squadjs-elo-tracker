@@ -602,9 +602,18 @@ export default class EloTracker extends BasePlugin {
    * @param {Array} participants  full endRound() output
    * @param {Array} eligible      participants above minParticipationRatio
    * @param {Set<string>|null} quitters  detected quitters (_detectQuittersAt)
-   * @returns {Object} eosID → { squadID, squadSize, experience, quit, quitDetected }
+   * @param {number|null} roundEndTime   for timePlayedMin (kill/death factor)
+   * @returns {Object} eosID → { squadID, squadSize, experience, kills, deaths,
+   *                             timePlayedMin, quit, quitDetected }
    */
-  _buildPerPlayerMeta(participants, eligible, quitters = null) {
+  _buildPerPlayerMeta(participants, eligible, quitters = null, roundEndTime = null) {
+    // Round duration in minutes (includes staging — uniform dilution, the
+    // per-minute kill normalization is unaffected in relative terms).
+    const startTime = this.session.roundStartTime;
+    const roundDurationMin =
+      roundEndTime != null && startTime != null
+        ? Math.max(0, (roundEndTime - startTime) / 60000)
+        : 0;
     const squadCounts = new Map(); // "teamID:squadID" → member count
     for (const p of participants) {
       const sid = p.dominantSquadID ?? 0;
@@ -623,6 +632,10 @@ export default class EloTracker extends BasePlugin {
         // Experience (eq. 8) = rounds played BEFORE this round. Must be read
         // before processTeam() writes the post-round cache entry.
         experience: this.eloCache.get(p.eosID)?.roundsPlayed ?? 0,
+        // Kill/death observations (eq. 9)
+        kills: this.killsByEosID.get(p.eosID) ?? 0,
+        deaths: this.deathsByEosID.get(p.eosID) ?? 0,
+        timePlayedMin: roundDurationMin * p.participationRatio,
         // Detection is always recorded (DB inspection); the engine-facing
         // `quit` only fires when the operator enabled the penalty.
         quitDetected,
@@ -851,7 +864,7 @@ export default class EloTracker extends BasePlugin {
     // With neutral (default) this.params this is numerically identical to the
     // old EloCalculator.computeTeamUpdate path (golden-tested).
     const quitters = this._detectQuittersAt(roundEndTime);
-    const perPlayerMeta = this._buildPerPlayerMeta(participants, eligible, quitters);
+    const perPlayerMeta = this._buildPerPlayerMeta(participants, eligible, quitters, roundEndTime);
     const { team1Updates, team2Updates } = computeRoundUpdate(
       team1Eligible.map(p => ({ eosID: p.eosID, ...getRating(p.eosID), participationRatio: p.participationRatio })),
       team2Eligible.map(p => ({ eosID: p.eosID, ...getRating(p.eosID), participationRatio: p.participationRatio })),
@@ -979,6 +992,7 @@ export default class EloTracker extends BasePlugin {
           const { deltaMu, deltaSigma } = team1Updates[i];
           const scaledDeltaMu = deltaMu * player.participationRatio;
           const scaledDeltaSigma = deltaSigma * player.participationRatio;
+          const meta = perPlayerMeta[player.eosID] ?? {};
           return {
             eosID: player.eosID,
             name: player.name,
@@ -991,7 +1005,15 @@ export default class EloTracker extends BasePlugin {
             scaledDeltaMu,
             scaledDeltaSigma,
             muAfter: rating.mu + scaledDeltaMu,
-            sigmaAfter: Math.max(rating.sigma - scaledDeltaSigma, 0.5)
+            sigmaAfter: Math.max(rating.sigma - scaledDeltaSigma, 0.5),
+            // TrueSkill2 observations (raw detection — gating is an engine
+            // parameter choice, so rebuilds can re-decide it)
+            squadID: meta.squadID ?? 0,
+            squadSize: meta.squadSize ?? 1,
+            kills: meta.kills ?? 0,
+            deaths: meta.deaths ?? 0,
+            quit: meta.quitDetected ?? false,
+            experienceBefore: meta.experience ?? 0
           };
         }),
         ...team2Eligible.map((player, i) => {
@@ -999,6 +1021,7 @@ export default class EloTracker extends BasePlugin {
           const { deltaMu, deltaSigma } = team2Updates[i];
           const scaledDeltaMu = deltaMu * player.participationRatio;
           const scaledDeltaSigma = deltaSigma * player.participationRatio;
+          const meta = perPlayerMeta[player.eosID] ?? {};
           return {
             eosID: player.eosID,
             name: player.name,
@@ -1011,7 +1034,13 @@ export default class EloTracker extends BasePlugin {
             scaledDeltaMu,
             scaledDeltaSigma,
             muAfter: rating.mu + scaledDeltaMu,
-            sigmaAfter: Math.max(rating.sigma - scaledDeltaSigma, 0.5)
+            sigmaAfter: Math.max(rating.sigma - scaledDeltaSigma, 0.5),
+            squadID: meta.squadID ?? 0,
+            squadSize: meta.squadSize ?? 1,
+            kills: meta.kills ?? 0,
+            deaths: meta.deaths ?? 0,
+            quit: meta.quitDetected ?? false,
+            experienceBefore: meta.experience ?? 0
           };
         })
       ]
@@ -1045,7 +1074,13 @@ export default class EloTracker extends BasePlugin {
         scaledDeltaMu: p.scaledDeltaMu,
         scaledDeltaSigma: p.scaledDeltaSigma,
         muAfter: p.muAfter,
-        sigmaAfter: p.sigmaAfter
+        sigmaAfter: p.sigmaAfter,
+        squadID: p.squadID,
+        squadSize: p.squadSize,
+        kills: p.kills,
+        deaths: p.deaths,
+        quit: p.quit,
+        experienceBefore: p.experienceBefore
       }));
       this.db.insertRoundPlayers(roundRecord.id, roundEndTime, playerRows).catch(err =>
         Logger.verbose('EloTracker', 1, `[onRoundEnded] Database player insert failed: ${err.message}`)

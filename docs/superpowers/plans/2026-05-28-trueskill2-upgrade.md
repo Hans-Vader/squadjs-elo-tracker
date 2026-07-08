@@ -49,7 +49,10 @@ the amendment wins.
   `count ≤ 0`): with `count|skill ~ N(a·skill+b, V)`, `t = -(a·mu+b)/√(V + a²σ²)`, standard
   probit-Gaussian EP update via `gauss.v`/`gauss.w`, chain-rule scaled by `a·σ²/√(V+a²σ²)` (sign of
   `a` handles kills vs deaths). Linear-Gaussian message only for `count > 0`. The "typical Squad kill
-  counts of 10–30" justification is wrong — delete it.
+  counts of 10–30" justification is wrong — delete it. NOTE (implementation finding): this censored
+  update is the exact eq.-9 semantics and pulls HARDER than naively pinning the Gaussian at 0 when
+  the expected count is well above zero — the latent's conditional mean lies below 0. That is
+  faithful to the paper's model, not a softening.
 - **A4 — delete `pU`/`pR` from `quitParams` (Tasks 1/9).** They are eq.-13 noisy-OR params that the
   factor never uses — dead config. Document that the implementation is the deterministic-quit limit
   (p_u→0, p_r→1) of eq. 13, the strongest-possible penalty (paper's own online "mini-game"

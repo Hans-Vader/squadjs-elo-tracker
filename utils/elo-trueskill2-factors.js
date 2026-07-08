@@ -226,6 +226,72 @@ export function teamFactorMessages(team1, team2, outcome, parameters, teamMeta =
  * @param {Object} parameters   uses beta, quitParams.{mQ, vQ}
  * @returns {{deltaPrecision, deltaPrecisionMean}}
  */
+/**
+ * Individual-statistics factor message (paper Section 8, eq. 9).
+ *
+ * Observation model (c ∈ {kill, death}):
+ *   count ~ max(0, N((w_p·perf_i + w_o·perf_o_i)·tp, v·tp))
+ * Marginalising perf_i ~ N(skill_i, β²) and perf_o_i ~ N(muOther, varOther):
+ *   count | skill_i ~ N(a·skill_i + b, V)
+ *   a = w_p·tp,  b = w_o·muOther·tp,  V = w_p²β²tp² + w_o²·varOther·tp² + v·tp
+ *
+ * count > 0  → exact linear-Gaussian message: {a²/V, a(count−b)/V}.
+ * count === 0 → the max(0,·) truncation bites (common in Squad: medics,
+ *   logistics). We observe "count ≤ 0" instead — a censored update
+ *   (amendment A3) via the same v/w machinery. Note this is the exact
+ *   eq.-9 semantics: the latent could be far below 0, so conditioning on
+ *   "≤ 0" pulls HARDER than naively pinning the Gaussian at exactly 0
+ *   whenever the expected count is well above zero.
+ *
+ * @param {Object} player        { mu, sigma }
+ * @param {number} count         observed kill or death count (≥ 0)
+ * @param {number} muOther       mean of the AVERAGE opposing performance
+ * @param {number} varOther      variance of that AVERAGE (teamSigmaSq/N², A1)
+ * @param {number} timePlayedMin minutes played (paper's tp_i)
+ * @param {Object} weightParams  { wPlayer, wOpponent, variance } — killParams or deathParams
+ * @param {Object} parameters    uses .beta
+ * @returns {{deltaPrecision, deltaPrecisionMean}}
+ */
+export function killDeathFactorMessage(player, count, muOther, varOther, timePlayedMin, weightParams, parameters) {
+  if (!(timePlayedMin > 0) || !Number.isFinite(count)) return EMPTY_MESSAGE;
+  const { wPlayer: wP, wOpponent: wO, variance: v } = weightParams ?? {};
+  if (!wP) return EMPTY_MESSAGE; // a = 0 ⇒ message is identically zero
+  const beta = parameters.beta;
+  const tp = timePlayedMin;
+
+  const a = wP * tp;
+  const b = (wO ?? 0) * muOther * tp;
+  const V = wP * wP * beta * beta * tp * tp + (wO ?? 0) * (wO ?? 0) * varOther * tp * tp + (v ?? 0) * tp;
+  if (!(V > 0)) return EMPTY_MESSAGE;
+
+  if (count > 0) {
+    // Exact linear-Gaussian observation on skill_i.
+    return {
+      deltaPrecision: (a * a) / V,
+      deltaPrecisionMean: (a * (count - b)) / V
+    };
+  }
+
+  // Censored update: observe count ≤ 0 under count ~ N(a·mu + b, V + a²σ²).
+  const sigmaSq = player.sigma * player.sigma;
+  const s = Math.sqrt(V + a * a * sigmaSq);
+  if (!(s > 0)) return EMPTY_MESSAGE;
+  const t = (a * player.mu + b) / s;
+  const vWin = gauss.v(-t, 0); // λ = φ(t)/Φ(−t), tail-guarded
+  const wVal = gauss.w(-t, 0);
+
+  const newMu = player.mu - ((a * sigmaSq) / s) * vWin;
+  const safeFactor = Math.min(((a * a * sigmaSq) / (s * s)) * wVal, 1 - 1e-10);
+  const newSigmaSq = sigmaSq * (1 - safeFactor);
+
+  const priorPrec = 1 / sigmaSq;
+  const postPrec = 1 / newSigmaSq;
+  return {
+    deltaPrecision: postPrec - priorPrec,
+    deltaPrecisionMean: newMu * postPrec - player.mu * priorPrec
+  };
+}
+
 export function quitFactorMessage(player, muOther, varOther, parameters) {
   const sigmaSq = player.sigma * player.sigma;
   const beta = parameters.beta;

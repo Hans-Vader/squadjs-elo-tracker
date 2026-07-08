@@ -322,6 +322,58 @@ export default async function runTrackerTests(runTest) {
     if (openMeta.s.quit !== false) throw new Error('non-quitter must stay quit=false');
   });
 
+  await runTest('Persistence: TS2 fields land in match log and Elo_RoundPlayers rows', async () => {
+    const server = createMockServer();
+    const tracker = new EloTracker(server, { ...mockOptions, enableDatabaseLogging: true }, mockConnectors);
+    const db = createMockDb();
+    let capturedRows = null;
+    db.insertRoundHistory = async () => ({ id: 7 });
+    db.insertRoundPlayers = async (roundHistoryId, endedAt, rows) => { capturedRows = rows; };
+    tracker.db = db;
+
+    const session = createMockSession();
+    session.roundStartTime = 1000;
+    session.endRound = () => [
+      { eosID: 'p1', name: 'P1', steamID: 's1', assignedTeamID: 1, dominantSquadID: 3, participationRatio: 1.0 },
+      { eosID: 'p2', name: 'P2', steamID: 's2', assignedTeamID: 1, dominantSquadID: 3, participationRatio: 1.0 },
+      { eosID: 'p3', name: 'P3', steamID: 's3', assignedTeamID: 2, dominantSquadID: 0, participationRatio: 1.0 }
+    ];
+    tracker.session = session;
+    await tracker.mount();
+
+    let capturedLog = null;
+    tracker._appendMatchLog = async (record) => { capturedLog = record; };
+
+    server.players = Array(6).fill(0).map((_, i) => ({ eosID: `x${i}`, teamID: (i % 2) + 1 }));
+    tracker.eloCache.set('p1', { mu: 25, sigma: 8.333, roundsPlayed: 12, wins: 6, losses: 6 });
+    tracker.eloCache.set('p2', { mu: 25, sigma: 8.333, roundsPlayed: 0, wins: 0, losses: 0 });
+    tracker.eloCache.set('p3', { mu: 25, sigma: 8.333, roundsPlayed: 3, wins: 2, losses: 1 });
+    tracker.killsByEosID.set('p1', 5);
+    tracker.deathsByEosID.set('p1', 2);
+
+    await server.emit('ROUND_ENDED', { winner: { team: '1', tickets: 200 }, loser: { team: '2', tickets: 50 } });
+
+    if (!capturedLog) throw new Error('match log record not written');
+    const logP1 = capturedLog.players.find((p) => p.eosID === 'p1');
+    if (logP1.kills !== 5) throw new Error(`log kills expected 5, got ${logP1.kills}`);
+    if (logP1.deaths !== 2) throw new Error(`log deaths expected 2, got ${logP1.deaths}`);
+    if (logP1.squadID !== 3) throw new Error(`log squadID expected 3, got ${logP1.squadID}`);
+    if (logP1.squadSize !== 2) throw new Error(`log squadSize expected 2, got ${logP1.squadSize}`);
+    if (logP1.quit !== false) throw new Error(`log quit expected false, got ${logP1.quit}`);
+    if (logP1.experienceBefore !== 12) throw new Error(`log experienceBefore expected 12, got ${logP1.experienceBefore}`);
+
+    if (!capturedRows) throw new Error('insertRoundPlayers not called');
+    const rowP1 = capturedRows.find((r) => r.eosID === 'p1');
+    if (rowP1.kills !== 5 || rowP1.deaths !== 2 || rowP1.squadID !== 3 || rowP1.squadSize !== 2) {
+      throw new Error(`DB row TS2 fields wrong: ${JSON.stringify(rowP1)}`);
+    }
+    if (rowP1.quit !== false || rowP1.experienceBefore !== 12) {
+      throw new Error(`DB row quit/experience wrong: ${JSON.stringify(rowP1)}`);
+    }
+    const rowP3 = capturedRows.find((r) => r.eosID === 'p3');
+    if (rowP3.kills !== 0 || rowP3.deaths !== 0) throw new Error('players without events default to 0 kills/deaths');
+  });
+
   await runTest('Quit detection: low participation but recently seen is NOT a quit', async () => {
     const { tracker } = await makeTrackerForTest();
     const EloSessionManager = (await import('../utils/elo-session-manager.js')).default;
