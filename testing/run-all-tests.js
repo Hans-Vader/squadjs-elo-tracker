@@ -42,6 +42,7 @@ export async function runAll() {
   const suites = [
     { name: 'EloCalculator', file: './test-elo-calculator.js' },
     { name: 'EloParameters', file: './test-elo-parameters.js' },
+    { name: 'EloTrueSkill2Factors', file: './test-elo-trueskill2-factors.js' },
     { name: 'EloSessionManager', file: './test-elo-session-manager.js' },
     { name: 'EloDatabase', file: './test-elo-database.js' },
     { name: 'EloTracker', file: './test-elo-tracker.js' },
