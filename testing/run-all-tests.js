@@ -47,6 +47,7 @@ export async function runAll() {
     { name: 'EloSessionManager', file: './test-elo-session-manager.js' },
     { name: 'EloDatabase', file: './test-elo-database.js' },
     { name: 'EloTracker', file: './test-elo-tracker.js' },
+    { name: 'EloRebuild', file: './test-elo-rebuild.js' },
     { name: 'EloSimulation', file: './test-elo-simulation.js', iterations: 20 }
   ];
 
