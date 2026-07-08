@@ -289,6 +289,34 @@ export default class EloDatabase {
            sigmaAfter: {
              type: Sequelize.FLOAT,
              allowNull: false
+           },
+           // --- TrueSkill2 observation columns (additive; see ensureTrueSkill2Columns) ---
+           squadID: {
+             type: Sequelize.INTEGER,
+             allowNull: true
+           },
+           squadSize: {
+             type: Sequelize.INTEGER,
+             allowNull: true
+           },
+           kills: {
+             type: Sequelize.INTEGER,
+             allowNull: false,
+             defaultValue: 0
+           },
+           deaths: {
+             type: Sequelize.INTEGER,
+             allowNull: false,
+             defaultValue: 0
+           },
+           quit: {
+             type: Sequelize.BOOLEAN,
+             allowNull: false,
+             defaultValue: false
+           },
+           experienceBefore: {
+             type: Sequelize.INTEGER,
+             allowNull: true
            }
          },
          { timestamps: false, tableName: 'Elo_RoundPlayers', charset: 'utf8mb4', collate: 'utf8mb4_unicode_ci' }
@@ -301,11 +329,16 @@ export default class EloDatabase {
             await this.sequelize.query('PRAGMA journal_mode=WAL;');
             await this.sequelize.query('PRAGMA synchronous=NORMAL;');
           }
-          
+
            await this.models.PluginState.sync();
            await this.models.PlayerStats.sync();
            await this.models.RoundHistory.sync();
            await this.models.RoundPlayers.sync();
+
+           // Additive migration for deployments whose Elo_RoundPlayers table
+           // predates TrueSkill2 (sync() without alter never adds columns —
+           // intentional, see commit 5f06177).
+           await this._ensureTrueSkill2Columns();
         });
 
       // Log PlayerStats row count on startup to detect silent table recreations
@@ -330,6 +363,34 @@ export default class EloDatabase {
     } catch (error) {
       Logger.verbose('EloTracker', 1, `[DB] Error initializing database: ${error.message}`);
       return { roundStartTime: null };
+    }
+  }
+
+  /**
+   * Additive schema migration: adds TrueSkill2 observation columns to an
+   * existing Elo_RoundPlayers table. Safe on all supported dialects
+   * (SQLite/MySQL/Postgres); no-ops when the columns already exist.
+   * Called from initDB inside the _executeWithRetry block (SQLite write mutex).
+   */
+  async _ensureTrueSkill2Columns() {
+    const queryInterface = this.sequelize.getQueryInterface();
+    const desc = await queryInterface.describeTable('Elo_RoundPlayers').catch(() => null);
+    if (!desc) return; // table absent — nothing to migrate
+
+    const columns = {
+      squadID: { type: Sequelize.INTEGER, allowNull: true },
+      squadSize: { type: Sequelize.INTEGER, allowNull: true },
+      kills: { type: Sequelize.INTEGER, allowNull: false, defaultValue: 0 },
+      deaths: { type: Sequelize.INTEGER, allowNull: false, defaultValue: 0 },
+      quit: { type: Sequelize.BOOLEAN, allowNull: false, defaultValue: false },
+      experienceBefore: { type: Sequelize.INTEGER, allowNull: true }
+    };
+
+    for (const [name, spec] of Object.entries(columns)) {
+      if (!desc[name]) {
+        await queryInterface.addColumn('Elo_RoundPlayers', name, spec);
+        Logger.verbose('EloTracker', 1, `[DB] Migration: added column Elo_RoundPlayers.${name}`);
+      }
     }
   }
 
