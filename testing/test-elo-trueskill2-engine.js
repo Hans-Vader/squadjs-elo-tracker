@@ -203,6 +203,57 @@ export default async function runEngineTests(runTest) {
     }
   });
 
+  // --- Quit penalty (paper Section 9, deterministic-quit limit of eq. 13) ---
+
+  await runTest('Quit penalty: quitter loses extra; teammates unaffected', async () => {
+    const t1 = four('t1_');
+    const t2 = four('t2_');
+    const noQuit = computeRoundUpdate(t1, t2, 'team2win', {}, DEFAULT_PARAMETERS);
+    const withQuit = computeRoundUpdate(t1, t2, 'team2win', { t1_3: { quit: true } }, DEFAULT_PARAMETERS);
+
+    if (withQuit.team1Updates[3].deltaMu >= noQuit.team1Updates[3].deltaMu) {
+      throw new Error(
+        `quitter must lose more: ${withQuit.team1Updates[3].deltaMu} vs ${noQuit.team1Updates[3].deltaMu}`
+      );
+    }
+    for (let i = 0; i < 3; i++) {
+      if (Math.abs(withQuit.team1Updates[i].deltaMu - noQuit.team1Updates[i].deltaMu) > 1e-9) {
+        throw new Error(`non-quitter ${i} must be unaffected by a teammate's quit`);
+      }
+    }
+    // Quitter's sigma must not increase vs the no-quit case (extra observation ⇒ more info)
+    if (withQuit.team1Updates[3].deltaSigma < noQuit.team1Updates[3].deltaSigma - 1e-9) {
+      throw new Error('quit observation must not reduce confidence');
+    }
+  });
+
+  await runTest('Quit penalty: applies even on the winning team', async () => {
+    const t1 = four('t1_').slice(0, 2);
+    const t2 = four('t2_').slice(0, 2);
+    const noQuit = computeRoundUpdate(t1, t2, 'team1win', {}, DEFAULT_PARAMETERS);
+    const withQuit = computeRoundUpdate(t1, t2, 'team1win', { t1_0: { quit: true } }, DEFAULT_PARAMETERS);
+    if (withQuit.team1Updates[0].deltaMu >= noQuit.team1Updates[0].deltaMu) {
+      throw new Error('quitter on the winning team must still see a smaller deltaMu');
+    }
+  });
+
+  await runTest('Quit penalty: stronger opposition ⇒ milder penalty (underperformance is relative)', async () => {
+    const me = [{ eosID: 'q', mu: 25, sigma: 8.333, participationRatio: 1 }];
+    const weakOpp = [{ eosID: 'w', mu: 15, sigma: 4, participationRatio: 1 }];
+    const strongOpp = [{ eosID: 's', mu: 40, sigma: 4, participationRatio: 1 }];
+    const vsWeak = computeRoundUpdate(me, weakOpp, 'team2win', { q: { quit: true } }, DEFAULT_PARAMETERS);
+    const vsWeakNoQuit = computeRoundUpdate(me, weakOpp, 'team2win', {}, DEFAULT_PARAMETERS);
+    const vsStrong = computeRoundUpdate(me, strongOpp, 'team2win', { q: { quit: true } }, DEFAULT_PARAMETERS);
+    const vsStrongNoQuit = computeRoundUpdate(me, strongOpp, 'team2win', {}, DEFAULT_PARAMETERS);
+    const penaltyWeak = vsWeakNoQuit.team1Updates[0].deltaMu - vsWeak.team1Updates[0].deltaMu;
+    const penaltyStrong = vsStrongNoQuit.team1Updates[0].deltaMu - vsStrong.team1Updates[0].deltaMu;
+    if (!(penaltyWeak > penaltyStrong)) {
+      throw new Error(
+        `quitting against weak opposition must cost more (weak ${penaltyWeak} vs strong ${penaltyStrong})`
+      );
+    }
+  });
+
   await runTest('Wrapper honors runtime BETA/TAU mutation (calibrator contract)', async () => {
     const betaBefore = EloCalculator.BETA;
     const tauBefore = EloCalculator.TAU;

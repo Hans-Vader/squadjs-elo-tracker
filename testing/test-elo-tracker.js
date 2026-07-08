@@ -43,6 +43,7 @@ export default async function runTrackerTests(runTest) {
     startRound: () => {},
     updatePlayers: () => {},
     endRound: () => [],
+    snapshotParticipants: () => [],
     roundStartTime: Date.now()
   });
 
@@ -294,6 +295,31 @@ export default async function runTrackerTests(runTest) {
     const meta = tracker._buildPerPlayerMeta(participants, participants);
     if (meta.vet.experience !== 42) throw new Error(`vet experience should be 42, got ${meta.vet.experience}`);
     if (meta.newbie.experience !== 0) throw new Error(`uncached player experience should be 0, got ${meta.newbie.experience}`);
+  });
+
+  await runTest('PerPlayerMeta: quit flag gated by enableQuitPenalty, detection always recorded', async () => {
+    const participants = [
+      { eosID: 'q', assignedTeamID: 1, dominantSquadID: 0, participationRatio: 0.3 },
+      { eosID: 's', assignedTeamID: 1, dominantSquadID: 0, participationRatio: 1 }
+    ];
+    const quitters = new Set(['q']);
+
+    // Default: gate OFF — engine-facing quit stays false, detection recorded.
+    const { tracker } = await makeTrackerForTest();
+    const gatedMeta = tracker._buildPerPlayerMeta(participants, participants, quitters);
+    if (gatedMeta.q.quit !== false) throw new Error('enableQuitPenalty=false must keep engine-facing quit false');
+    if (gatedMeta.q.quitDetected !== true) throw new Error('detected quit must still be recorded');
+    if (gatedMeta.s.quitDetected !== false) throw new Error('non-quitter must not be flagged');
+
+    // Gate ON — engine-facing quit follows detection.
+    const server2 = createMockServer();
+    const tracker2 = new EloTracker(server2, { ...mockOptions, enableQuitPenalty: true }, mockConnectors);
+    tracker2.db = createMockDb();
+    tracker2.session = createMockSession();
+    await tracker2.mount();
+    const openMeta = tracker2._buildPerPlayerMeta(participants, participants, quitters);
+    if (openMeta.q.quit !== true) throw new Error('enableQuitPenalty=true must pass quit through to the engine');
+    if (openMeta.s.quit !== false) throw new Error('non-quitter must stay quit=false');
   });
 
   await runTest('Quit detection: low participation but recently seen is NOT a quit', async () => {

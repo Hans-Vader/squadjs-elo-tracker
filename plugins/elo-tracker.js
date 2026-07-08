@@ -601,9 +601,10 @@ export default class EloTracker extends BasePlugin {
    *
    * @param {Array} participants  full endRound() output
    * @param {Array} eligible      participants above minParticipationRatio
-   * @returns {Object} eosID → { squadID, squadSize }
+   * @param {Set<string>|null} quitters  detected quitters (_detectQuittersAt)
+   * @returns {Object} eosID → { squadID, squadSize, experience, quit, quitDetected }
    */
-  _buildPerPlayerMeta(participants, eligible) {
+  _buildPerPlayerMeta(participants, eligible, quitters = null) {
     const squadCounts = new Map(); // "teamID:squadID" → member count
     for (const p of participants) {
       const sid = p.dominantSquadID ?? 0;
@@ -615,12 +616,17 @@ export default class EloTracker extends BasePlugin {
     const perPlayerMeta = {};
     for (const p of eligible) {
       const sid = p.dominantSquadID ?? 0;
+      const quitDetected = quitters?.has(p.eosID) ?? false;
       perPlayerMeta[p.eosID] = {
         squadID: sid,
         squadSize: sid === 0 ? 1 : (squadCounts.get(`${p.assignedTeamID}:${sid}`) ?? 1),
         // Experience (eq. 8) = rounds played BEFORE this round. Must be read
         // before processTeam() writes the post-round cache entry.
-        experience: this.eloCache.get(p.eosID)?.roundsPlayed ?? 0
+        experience: this.eloCache.get(p.eosID)?.roundsPlayed ?? 0,
+        // Detection is always recorded (DB inspection); the engine-facing
+        // `quit` only fires when the operator enabled the penalty.
+        quitDetected,
+        quit: this.options.enableQuitPenalty ? quitDetected : false
       };
     }
     return perPlayerMeta;
@@ -844,7 +850,8 @@ export default class EloTracker extends BasePlugin {
     // --- Run TrueSkill2 ---
     // With neutral (default) this.params this is numerically identical to the
     // old EloCalculator.computeTeamUpdate path (golden-tested).
-    const perPlayerMeta = this._buildPerPlayerMeta(participants, eligible);
+    const quitters = this._detectQuittersAt(roundEndTime);
+    const perPlayerMeta = this._buildPerPlayerMeta(participants, eligible, quitters);
     const { team1Updates, team2Updates } = computeRoundUpdate(
       team1Eligible.map(p => ({ eosID: p.eosID, ...getRating(p.eosID), participationRatio: p.participationRatio })),
       team2Eligible.map(p => ({ eosID: p.eosID, ...getRating(p.eosID), participationRatio: p.participationRatio })),
