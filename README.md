@@ -107,22 +107,22 @@ Add the following to your `config.json`:
     "dialect": "sqlite",
     "storage": "squad-server.sqlite"
   },
-  "mysql": {
-    "dialect": "mysql",
-    "host": "localhost",
-    "port": 3306,
-    "username": "squad",
-    "password": "password",
-    "database": "squad_db"
-  },
-  "postgres": {
-    "dialect": "postgres",
-    "host": "localhost",
-    "port": 5432,
-    "username": "squad",
-    "password": "password",
-    "database": "squad_db"
-  },
+  //"mysql": {
+  //  "dialect": "mysql",
+  //  "host": "localhost",
+  //  "port": 3306,
+  //  "username": "squad",
+  //  "password": "password",
+  //  "database": "squad_db"
+  //},
+  //"postgres": {
+  //  "dialect": "postgres",
+  //  "host": "localhost",
+  //  "port": 5432,
+  //  "username": "squad",
+  //  "password": "password",
+  //  "database": "squad_db"
+  //},
   "discord": {
     "connector": "discord",
     "token": "YOUR_BOT_TOKEN"
@@ -237,26 +237,6 @@ A player's rating change is scaled by their time in the round:
 - **Eligibility:** Players must reach `minRoundsForLeaderboard` to receive an official rank.
 - **Sorting:** Ranked by **Competitive Skill Rank (CSR) (μ - 3.0σ)**. This ensures that leaderboard scores require both high skill and low uncertainty, encouraging active play.
 - **Provisional:** Players below the threshold are visible but unranked.
-
----
-
-## ⚠️ Critical Notes
-
-### deltaSigma Direction
-
-The `deltaSigma` returned by the calculator is a **reduction value**, applied as:
-
-```
-newSigma = sigma - deltaSigma
-```
-
-This is intentional. **Do not change this to addition.**
-
-### bulkIncrementPlayerStats Is Incremental
-
-`bulkIncrementPlayerStats()` **adds** to existing `wins`, `losses`, and `roundsPlayed` counts. It does **not** overwrite them. Do not pass cumulative totals — pass only the delta for the current round.
-
----
 
 ## Author
 
