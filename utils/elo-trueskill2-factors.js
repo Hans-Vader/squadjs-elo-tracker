@@ -23,6 +23,8 @@
  * (neutral defaults); an approximation of iterated EP otherwise.
  */
 
+import * as gauss from './elo-gauss.js';
+
 export const EMPTY_MESSAGE = Object.freeze({ deltaPrecision: 0, deltaPrecisionMean: 0 });
 
 /**
@@ -56,4 +58,135 @@ export function combineMessages(prior, messages) {
     throw new Error(`posterior precision <= 0 (${precision}); factor message instability`);
   }
   return { precision, precisionMean };
+}
+
+/**
+ * Team-comparison factor: the classic TrueSkill two-team update expressed as
+ * natural-form messages. Reproduces the pre-refactor
+ * EloCalculator.computeTeamUpdate math exactly (golden-tested), with two
+ * deliberate differences:
+ *   - NO τ² inside the message — dynamics noise is applied ONCE by the engine
+ *     after all factor messages are combined (amendment A2, paper step 2(d)).
+ *   - v/w carry the inverse-Mills tail guard from elo-gauss.js (amendment A5).
+ *
+ * @param {Array<{mu, sigma, participationRatio?}>} team1
+ * @param {Array<{mu, sigma, participationRatio?}>} team2
+ * @param {'team1win'|'team2win'|'draw'} outcome
+ * @param {Object} parameters   needs beta, drawProbability
+ * @param {Object} teamMeta     optional { team1: { meanShift }, team2: { meanShift } }
+ *                              additive shifts on teamMu (squad-offset factor, eq. 7)
+ *
+ * @returns {{
+ *   empty?: boolean, degenerate?: boolean,
+ *   team1Messages: Array, team2Messages: Array,
+ *   teamMu1, teamMu2, teamSigmaSq1, teamSigmaSq2, c,
+ *   effectiveN1, effectiveN2, nTotal, epsilon, tRaw
+ * }}
+ * Messages carry { deltaPrecision, deltaPrecisionMean, vVal, wVal }.
+ */
+export function teamFactorMessages(team1, team2, outcome, parameters, teamMeta = {}) {
+  const beta = parameters.beta;
+  const drawP = parameters.drawProbability;
+
+  // Edge case: empty teams (legacy parity)
+  if (team1.length === 0 && team2.length === 0) {
+    return { empty: true, team1Messages: [], team2Messages: [] };
+  }
+
+  const getRatio = (p) => p.participationRatio ?? 1.0;
+
+  // Effective headcount (sum of participation ratios), capped at 50 slots to
+  // prevent disconnected "ghost" players from inflating variance.
+  let effectiveN1 = team1.reduce((sum, p) => sum + getRatio(p), 0);
+  let effectiveN2 = team2.reduce((sum, p) => sum + getRatio(p), 0);
+  const scale1 = effectiveN1 > 50.0 ? 50.0 / effectiveN1 : 1.0;
+  const scale2 = effectiveN2 > 50.0 ? 50.0 / effectiveN2 : 1.0;
+  effectiveN1 *= scale1;
+  effectiveN2 *= scale2;
+
+  const meanShift1 = teamMeta.team1?.meanShift ?? 0;
+  const meanShift2 = teamMeta.team2?.meanShift ?? 0;
+
+  const teamMu1 = team1.reduce((sum, p) => sum + p.mu * getRatio(p), 0) * scale1 + meanShift1;
+  const teamMu2 = team2.reduce((sum, p) => sum + p.mu * getRatio(p), 0) * scale2 + meanShift2;
+  const teamSigmaSq1 =
+    team1.reduce((sum, p) => sum + (p.sigma * p.sigma + beta * beta) * getRatio(p), 0) * scale1;
+  const teamSigmaSq2 =
+    team2.reduce((sum, p) => sum + (p.sigma * p.sigma + beta * beta) * getRatio(p), 0) * scale2;
+
+  const c = Math.sqrt(teamSigmaSq1 + teamSigmaSq2);
+
+  if (c === 0) {
+    // Legacy parity: zero updates (only reachable with zero sigma AND zero beta)
+    return {
+      degenerate: true,
+      team1Messages: team1.map(() => EMPTY_MESSAGE),
+      team2Messages: team2.map(() => EMPTY_MESSAGE),
+      teamMu1,
+      teamMu2,
+      teamSigmaSq1,
+      teamSigmaSq2,
+      c,
+      effectiveN1,
+      effectiveN2
+    };
+  }
+
+  const nTotal = effectiveN1 + effectiveN2;
+  const epsilon = Math.sqrt(nTotal) * beta * Math.sqrt(2) * gauss.erfInv(drawP);
+  const tRaw = (teamMu1 - teamMu2) / c;
+
+  const buildMessage = (player, isTeam1) => {
+    const sigmaSq = player.sigma * player.sigma;
+
+    let vVal, wVal;
+    let isWinner = null;
+
+    if (outcome === 'draw') {
+      const t = isTeam1 ? tRaw : -tRaw;
+      vVal = gauss.vDraw(t, epsilon / c);
+      wVal = gauss.wDraw(t, epsilon / c);
+    } else {
+      // Win/loss: t from the WINNER's perspective; loser's deltaMu negated below.
+      const tWinner = outcome === 'team1win' ? tRaw : -tRaw;
+      isWinner = outcome === 'team1win' ? isTeam1 : !isTeam1;
+      vVal = gauss.v(tWinner, epsilon / c);
+      wVal = gauss.w(tWinner, epsilon / c);
+    }
+
+    let deltaMu = (sigmaSq / c) * vVal;
+    if (outcome !== 'draw' && !isWinner) deltaMu = -deltaMu;
+
+    const deltaSigmaFactor = Math.min((sigmaSq / (c * c)) * wVal, 1 - 1e-10);
+    // No τ² here — see amendment A2.
+    const newSigmaSq = sigmaSq * (1 - deltaSigmaFactor);
+    const newMu = player.mu + deltaMu;
+
+    // Convert the (mu, sigma) update into a natural-form message:
+    //   message.deltaPrecision     = posterior π − prior π
+    //   message.deltaPrecisionMean = posterior τ − prior τ
+    const priorPrec = 1 / sigmaSq;
+    const postPrec = 1 / newSigmaSq;
+    return {
+      deltaPrecision: postPrec - priorPrec,
+      deltaPrecisionMean: newMu * postPrec - player.mu * priorPrec,
+      vVal,
+      wVal
+    };
+  };
+
+  return {
+    team1Messages: team1.map((p) => buildMessage(p, true)),
+    team2Messages: team2.map((p) => buildMessage(p, false)),
+    teamMu1,
+    teamMu2,
+    teamSigmaSq1,
+    teamSigmaSq2,
+    c,
+    effectiveN1,
+    effectiveN2,
+    nTotal,
+    epsilon,
+    tRaw
+  };
 }
