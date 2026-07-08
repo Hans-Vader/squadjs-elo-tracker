@@ -69,6 +69,16 @@ export function computeRoundUpdate(team1, team2, outcome, perPlayerMeta, paramet
 
   const tau = parameters.tau ?? 0;
 
+  // Experience offset (eq. 8): biased random walk on skill after each match,
+  // win or lose. Index = matches played before this round, clamped to the table.
+  const experienceShift = (player) => {
+    const offsets = parameters.experienceOffsets;
+    if (!offsets || offsets.length === 0) return 0;
+    const exp = perPlayerMeta[player.eosID]?.experience ?? 0;
+    const idx = Math.min(Math.max(Math.floor(exp), 0), offsets.length - 1);
+    return offsets[idx] ?? 0;
+  };
+
   const buildUpdate = (player, teamMessage) => {
     const prior = fromMuSigma(player.mu, player.sigma);
     const posterior = combineMessages(prior, [teamMessage]);
@@ -76,9 +86,10 @@ export function computeRoundUpdate(team1, team2, outcome, perPlayerMeta, paramet
 
     // Dynamics noise applied ONCE, after all factor messages (amendment A2).
     const newSigma = Math.sqrt(sigma * sigma + tau * tau);
+    const newMu = mu + experienceShift(player);
 
     return {
-      deltaMu: mu - player.mu,
+      deltaMu: newMu - player.mu,
       deltaSigma: player.sigma - newSigma,
       vVal: teamMessage.vVal ?? 0,
       wVal: teamMessage.wVal ?? 0

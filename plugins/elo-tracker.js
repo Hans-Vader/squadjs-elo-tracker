@@ -617,7 +617,10 @@ export default class EloTracker extends BasePlugin {
       const sid = p.dominantSquadID ?? 0;
       perPlayerMeta[p.eosID] = {
         squadID: sid,
-        squadSize: sid === 0 ? 1 : (squadCounts.get(`${p.assignedTeamID}:${sid}`) ?? 1)
+        squadSize: sid === 0 ? 1 : (squadCounts.get(`${p.assignedTeamID}:${sid}`) ?? 1),
+        // Experience (eq. 8) = rounds played BEFORE this round. Must be read
+        // before processTeam() writes the post-round cache entry.
+        experience: this.eloCache.get(p.eosID)?.roundsPlayed ?? 0
       };
     }
     return perPlayerMeta;

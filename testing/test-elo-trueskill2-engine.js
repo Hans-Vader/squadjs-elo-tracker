@@ -156,6 +156,53 @@ export default async function runEngineTests(runTest) {
     }
   });
 
+  // --- Experience offset (paper eq. 8) ---
+
+  const TUNED_EXP = loadParameters({
+    experienceOffsets: Array.from({ length: 200 }, (_, i) => (i < 50 ? 1.0 * (1 - i / 50) : 0))
+  });
+
+  await runTest('Experience offset: new player loses less than experienced player', async () => {
+    const newPlayer = [{ eosID: 'n', mu: 25, sigma: 8.333, participationRatio: 1 }];
+    const opp = [{ eosID: 'o', mu: 25, sigma: 8.333, participationRatio: 1 }];
+    const metaNew = { n: { experience: 0 }, o: { experience: 100 } };
+    const metaExp = { n: { experience: 100 }, o: { experience: 100 } };
+
+    const r1 = computeRoundUpdate(newPlayer, opp, 'team2win', metaNew, TUNED_EXP);
+    const r2 = computeRoundUpdate(newPlayer, opp, 'team2win', metaExp, TUNED_EXP);
+
+    // Both lose, but the new player's positive drift softens the drop.
+    if (r1.team1Updates[0].deltaMu <= r2.team1Updates[0].deltaMu) {
+      throw new Error(
+        `new-player drop should be softer: exp0 ${r1.team1Updates[0].deltaMu} vs exp100 ${r2.team1Updates[0].deltaMu}`
+      );
+    }
+    // The offset applies regardless of outcome — exactly +1.0 difference here.
+    if (Math.abs(r1.team1Updates[0].deltaMu - r2.team1Updates[0].deltaMu - 1.0) > 1e-9) {
+      throw new Error('drift difference must equal experienceOffsets[0] - experienceOffsets[100]');
+    }
+  });
+
+  await runTest('Experience offset: capped beyond the table length', async () => {
+    const a = [{ eosID: 'a', mu: 25, sigma: 8.333, participationRatio: 1 }];
+    const b = [{ eosID: 'b', mu: 25, sigma: 8.333, participationRatio: 1 }];
+    const r1 = computeRoundUpdate(a, b, 'team1win', { a: { experience: 200 }, b: { experience: 200 } }, TUNED_EXP);
+    const r2 = computeRoundUpdate(a, b, 'team1win', { a: { experience: 5000 }, b: { experience: 5000 } }, TUNED_EXP);
+    if (Math.abs(r1.team1Updates[0].deltaMu - r2.team1Updates[0].deltaMu) > 1e-9) {
+      throw new Error('experience > table length must not change the update further');
+    }
+  });
+
+  await runTest('Experience offset: neutral DEFAULT_PARAMETERS give no drift', async () => {
+    const a = [{ eosID: 'a', mu: 25, sigma: 8.333, participationRatio: 1 }];
+    const b = [{ eosID: 'b', mu: 25, sigma: 8.333, participationRatio: 1 }];
+    const r0 = computeRoundUpdate(a, b, 'team1win', {}, DEFAULT_PARAMETERS);
+    const r1 = computeRoundUpdate(a, b, 'team1win', { a: { experience: 0 }, b: { experience: 0 } }, DEFAULT_PARAMETERS);
+    if (Math.abs(r0.team1Updates[0].deltaMu - r1.team1Updates[0].deltaMu) > 1e-9) {
+      throw new Error('neutral DEFAULT_PARAMETERS must give no experience drift');
+    }
+  });
+
   await runTest('Wrapper honors runtime BETA/TAU mutation (calibrator contract)', async () => {
     const betaBefore = EloCalculator.BETA;
     const tauBefore = EloCalculator.TAU;
