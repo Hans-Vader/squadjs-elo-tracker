@@ -154,4 +154,129 @@ export default async function runTrackerTests(runTest) {
     if (!bulkCalled) throw new Error('Failed to call bulkIncrementPlayerStats');
     if (!historyCalled) throw new Error('Failed to call insertRoundHistory');
   });
+
+  // --- TrueSkill2 data capture (kills / deaths / quit) ---
+
+  const makeTrackerForTest = async () => {
+    const server = createMockServer();
+    const tracker = new EloTracker(server, mockOptions, mockConnectors);
+    tracker.db = createMockDb();
+    tracker.session = createMockSession();
+    await tracker.mount();
+    return { server, tracker };
+  };
+
+  await runTest('TS2 wiring: kill/death listeners registered and removed symmetrically', async () => {
+    const { server, tracker } = await makeTrackerForTest();
+    if (!server.listeners['PLAYER_WOUNDED']) throw new Error('PLAYER_WOUNDED listener missing after mount');
+    if (!server.listeners['PLAYER_DIED']) throw new Error('PLAYER_DIED listener missing after mount');
+    await tracker.unmount();
+    if (server.listeners['PLAYER_WOUNDED']) throw new Error('PLAYER_WOUNDED listener not removed on unmount');
+    if (server.listeners['PLAYER_DIED']) throw new Error('PLAYER_DIED listener not removed on unmount');
+  });
+
+  await runTest('TS2 options: quit gate defaults off, params frozen & neutral', async () => {
+    const { tracker } = await makeTrackerForTest();
+    if (tracker.options.enableQuitPenalty !== false) throw new Error('enableQuitPenalty must default to false');
+    if (tracker.options.quitGraceSeconds !== 60) throw new Error('quitGraceSeconds must default to 60');
+    if (tracker.options.quitParticipationThreshold !== 0.5) throw new Error('quitParticipationThreshold must default to 0.5');
+    if (!tracker.params || !Object.isFrozen(tracker.params)) throw new Error('tracker.params must be a frozen parameter object');
+    if (tracker.params.beta !== 25.0 / 6.0) throw new Error('tracker.params must carry engine defaults');
+  });
+
+  await runTest('Kills/Deaths: PLAYER_WOUNDED credits kills, PLAYER_DIED counts deaths', async () => {
+    const { server, tracker } = await makeTrackerForTest();
+    const a = { eosID: 'a', teamID: 1 };
+    const b = { eosID: 'b', teamID: 2 };
+
+    // B downs A twice, A downs B once
+    await server.emit('PLAYER_WOUNDED', { victim: a, attacker: b, teamkill: false, time: 1000 });
+    await server.emit('PLAYER_WOUNDED', { victim: a, attacker: b, teamkill: false, time: 2000 });
+    await server.emit('PLAYER_WOUNDED', { victim: b, attacker: a, teamkill: false, time: 3000 });
+    // A gives up twice, B bleeds out once
+    await server.emit('PLAYER_DIED', { victim: a, attacker: b, time: 1500 });
+    await server.emit('PLAYER_DIED', { victim: a, attacker: b, time: 2500 });
+    await server.emit('PLAYER_DIED', { victim: b, attacker: a, time: 3500 });
+
+    if (tracker.killsByEosID.get('a') !== 1) throw new Error(`A should have 1 kill, got ${tracker.killsByEosID.get('a')}`);
+    if (tracker.killsByEosID.get('b') !== 2) throw new Error(`B should have 2 kills, got ${tracker.killsByEosID.get('b')}`);
+    if (tracker.deathsByEosID.get('a') !== 2) throw new Error(`A should have 2 deaths, got ${tracker.deathsByEosID.get('a')}`);
+    if (tracker.deathsByEosID.get('b') !== 1) throw new Error(`B should have 1 death, got ${tracker.deathsByEosID.get('b')}`);
+  });
+
+  await runTest('Kills/Deaths: teamkill / self-wound give no kill credit; deaths still count', async () => {
+    const { server, tracker } = await makeTrackerForTest();
+    const a = { eosID: 'a', teamID: 1 };
+    const c = { eosID: 'c', teamID: 1 };
+
+    // Self-wound (attacker === victim)
+    await server.emit('PLAYER_WOUNDED', { victim: a, attacker: a, teamkill: false, time: 1000 });
+    // Teamkill via explicit flag
+    await server.emit('PLAYER_WOUNDED', { victim: c, attacker: a, teamkill: true, time: 2000 });
+    // Teamkill inferable from equal teamIDs (flag missing)
+    await server.emit('PLAYER_WOUNDED', { victim: c, attacker: a, time: 3000 });
+    // Null attacker (environment / unclaimed)
+    await server.emit('PLAYER_WOUNDED', { victim: c, attacker: null, time: 4000 });
+    // Deaths always count for the victim
+    await server.emit('PLAYER_DIED', { victim: a, attacker: a, time: 1500 });
+    await server.emit('PLAYER_DIED', { victim: c, attacker: null, time: 4500 });
+
+    if (tracker.killsByEosID.size !== 0) throw new Error('No kill credit expected for suicide/teamkill/null attacker');
+    if (tracker.deathsByEosID.get('a') !== 1) throw new Error('Suicide death must still count');
+    if (tracker.deathsByEosID.get('c') !== 1) throw new Error('Teamkill/environment victim death must still count');
+  });
+
+  await runTest('Kills/Deaths: maps cleared on NEW_GAME', async () => {
+    const { server, tracker } = await makeTrackerForTest();
+    await server.emit('PLAYER_WOUNDED', { victim: { eosID: 'v', teamID: 2 }, attacker: { eosID: 'k', teamID: 1 }, teamkill: false, time: 1000 });
+    await server.emit('PLAYER_DIED', { victim: { eosID: 'v', teamID: 2 }, attacker: { eosID: 'k', teamID: 1 }, time: 1500 });
+    tracker.lastSeenByEosID.set('v', 1500);
+
+    await server.emit('NEW_GAME', {});
+
+    if (tracker.killsByEosID.size !== 0) throw new Error('killsByEosID must be cleared on NEW_GAME');
+    if (tracker.deathsByEosID.size !== 0) throw new Error('deathsByEosID must be cleared on NEW_GAME');
+    if (tracker.lastSeenByEosID.size !== 0) throw new Error('lastSeenByEosID must be cleared on NEW_GAME');
+  });
+
+  await runTest('Quit detection: early absent leaver flagged, present player not', async () => {
+    const { tracker } = await makeTrackerForTest();
+
+    // Real session manager with controlled timestamps
+    const EloSessionManager = (await import('../utils/elo-session-manager.js')).default;
+    const session = new EloSessionManager();
+    tracker.session = session;
+
+    session.startRound(10000);
+    session.updatePlayers([
+      { eosID: 'q', name: 'Q', steamID: 'sq', teamID: 1, squadID: 1 },
+      { eosID: 's', name: 'S', steamID: 'ss', teamID: 1, squadID: 1 }
+    ], 10000);
+    // Q leaves at 40s of a 100s round — participation 0.3 < 0.5
+    session.updatePlayers([
+      { eosID: 's', name: 'S', steamID: 'ss', teamID: 1, squadID: 1 }
+    ], 40000);
+
+    tracker.lastSeenByEosID.set('q', 40000);
+    tracker.lastSeenByEosID.set('s', 110000);
+
+    const quitters = tracker._detectQuittersAt(110000);
+    if (!quitters.has('q')) throw new Error('Q (30% participation, absent 70s) should be detected as quitter');
+    if (quitters.has('s')) throw new Error('S (full round, present at end) must NOT be a quitter');
+  });
+
+  await runTest('Quit detection: low participation but recently seen is NOT a quit', async () => {
+    const { tracker } = await makeTrackerForTest();
+    const EloSessionManager = (await import('../utils/elo-session-manager.js')).default;
+    const session = new EloSessionManager();
+    tracker.session = session;
+
+    session.startRound(10000);
+    // Late joiner: joins at 80s of a 100s round — participation 0.2 < 0.5, but present at end
+    session.updatePlayers([{ eosID: 'l', name: 'L', steamID: 'sl', teamID: 1, squadID: 1 }], 90000);
+    tracker.lastSeenByEosID.set('l', 110000);
+
+    const quitters = tracker._detectQuittersAt(110000);
+    if (quitters.has('l')) throw new Error('Late joiner present at round end must NOT be flagged as quitter');
+  });
 }

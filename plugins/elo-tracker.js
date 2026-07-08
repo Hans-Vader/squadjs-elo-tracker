@@ -143,6 +143,7 @@ import EloSessionManager from '../utils/elo-session-manager.js';
 import EloCalculator from '../utils/elo-calculator.js';
 import { EloDiscord } from '../utils/elo-discord.js';
 import EloCommands from '../utils/elo-commands.js';
+import { loadParameters } from '../utils/elo-parameters.js';
 
 export default class EloTracker extends BasePlugin {
   static version = '1.3.0';
@@ -186,6 +187,30 @@ export default class EloTracker extends BasePlugin {
          description: 'If true, mirrors round outcome data into database tables for querying (default: false).',
          default: false,
          type: 'boolean'
+       },
+       quitGraceSeconds: {
+         required: false,
+         description: 'A player absent from the server for longer than this (seconds) at round end counts as departed. Keep >= 2 RCON poll cycles (~60s).',
+         default: 60,
+         type: 'number'
+       },
+       quitParticipationThreshold: {
+         required: false,
+         description: 'Players below this participation ratio AND absent at round end are flagged as quitters.',
+         default: 0.5,
+         type: 'number'
+       },
+       enableQuitPenalty: {
+         required: false,
+         description: 'If true, detected quitters receive the TrueSkill2 quit penalty (calibrate trueskill2.quitParams first!). Quit flags are recorded to the DB regardless.',
+         default: false,
+         type: 'boolean'
+       },
+       trueskill2: {
+         required: false,
+         description: 'TrueSkill2 engine parameter overrides (squadOffsets, experienceOffsets, killParams, deathParams, quitParams, ...). Neutral by default — see utils/elo-parameters.js.',
+         default: {},
+         type: 'object'
        }
      };
    }
@@ -209,6 +234,17 @@ export default class EloTracker extends BasePlugin {
     // Connected players only. Populated on join, flushed at round end.
     this.eloCache = new Map();
 
+    // TrueSkill2 engine parameters (frozen; neutral unless configured)
+    this.params = loadParameters(this.options.trueskill2 ?? {});
+
+    // Per-round TrueSkill2 observations, cleared on NEW_GAME.
+    // Kills = PLAYER_WOUNDED downs (Squad scoreboard semantics);
+    // deaths = PLAYER_DIED give-up/bleed-out (revives negate a death).
+    this.killsByEosID = new Map();
+    this.deathsByEosID = new Map();
+    // eosID → last timestamp the player was seen in server.players
+    this.lastSeenByEosID = new Map();
+
     this.discordAdminChannel = null;
     this.discordPublicChannel = null;
     this.discordReportChannel = null;
@@ -231,6 +267,8 @@ export default class EloTracker extends BasePlugin {
     this.listeners.onLayerInfoUpdated = this.onLayerInfoUpdated.bind(this);
     this.listeners.onUpdatedPlayerInfo = this.onUpdatedPlayerInfo.bind(this);
     this.listeners.onRoundEnded = this.onRoundEnded.bind(this);
+    this.listeners.onPlayerWounded = this.onPlayerWounded.bind(this);
+    this.listeners.onPlayerDied = this.onPlayerDied.bind(this);
     this.listeners.onServerInfoUpdated = this.onServerInfoUpdated.bind(this);
     this.listeners.onTeamBalancerScramble = this.onTeamBalancerScramble.bind(this);
     EloDiscord.registerDiscordCommands(this);
@@ -313,6 +351,8 @@ export default class EloTracker extends BasePlugin {
     this.server.removeListener('UPDATED_LAYER_INFORMATION', this.listeners.onLayerInfoUpdated);
     this.server.removeListener('UPDATED_PLAYER_INFORMATION', this.listeners.onUpdatedPlayerInfo);
     this.server.removeListener('ROUND_ENDED', this.listeners.onRoundEnded);
+    this.server.removeListener('PLAYER_WOUNDED', this.listeners.onPlayerWounded);
+    this.server.removeListener('PLAYER_DIED', this.listeners.onPlayerDied);
     this.server.removeListener('UPDATED_SERVER_INFORMATION', this.listeners.onServerInfoUpdated);
     this.server.removeListener('TEAM_BALANCER_SCRAMBLE_EXECUTED', this.listeners.onTeamBalancerScramble);
     this.server.removeListener('CHAT_COMMAND:elo', this.listeners.onEloCommand);
@@ -322,6 +362,8 @@ export default class EloTracker extends BasePlugin {
     this.server.on('UPDATED_LAYER_INFORMATION', this.listeners.onLayerInfoUpdated);
     this.server.on('UPDATED_PLAYER_INFORMATION', this.listeners.onUpdatedPlayerInfo);
     this.server.on('ROUND_ENDED', this.listeners.onRoundEnded);
+    this.server.on('PLAYER_WOUNDED', this.listeners.onPlayerWounded);
+    this.server.on('PLAYER_DIED', this.listeners.onPlayerDied);
     this.server.on('UPDATED_SERVER_INFORMATION', this.listeners.onServerInfoUpdated);
     this.server.on('TEAM_BALANCER_SCRAMBLE_EXECUTED', this.listeners.onTeamBalancerScramble);
     this.server.on('CHAT_COMMAND:elo', this.listeners.onEloCommand);
@@ -351,6 +393,8 @@ export default class EloTracker extends BasePlugin {
     this.server.removeListener('UPDATED_LAYER_INFORMATION', this.listeners.onLayerInfoUpdated);
     this.server.removeListener('UPDATED_PLAYER_INFORMATION', this.listeners.onUpdatedPlayerInfo);
     this.server.removeListener('ROUND_ENDED', this.listeners.onRoundEnded);
+    this.server.removeListener('PLAYER_WOUNDED', this.listeners.onPlayerWounded);
+    this.server.removeListener('PLAYER_DIED', this.listeners.onPlayerDied);
     this.server.removeListener('UPDATED_SERVER_INFORMATION', this.listeners.onServerInfoUpdated);
     this.server.removeListener('TEAM_BALANCER_SCRAMBLE_EXECUTED', this.listeners.onTeamBalancerScramble);
     this.server.removeListener('CHAT_COMMAND:elo', this.listeners.onEloCommand);
@@ -439,6 +483,9 @@ export default class EloTracker extends BasePlugin {
      await this.db.saveRoundStartTime(now);
      this.lastRoundSnapshot = null;
      this.eloCache.clear();
+     this.killsByEosID.clear();
+     this.deathsByEosID.clear();
+     this.lastSeenByEosID.clear();
      this._roundStartEmbedPending = Date.now();
 
      // NOTE (null-teamID transient): SquadJS RCON polling may return players with 
@@ -461,6 +508,13 @@ export default class EloTracker extends BasePlugin {
 
     const allPlayers = this.server.players;
     this.session.updatePlayers(allPlayers);
+
+    // Track presence for quit detection (players absent for > quitGraceSeconds
+    // at round end are considered departed; ~30s RCON poll granularity).
+    const seenAt = Date.now();
+    for (let i = 0; i < allPlayers.length; i++) {
+      if (allPlayers[i]?.eosID) this.lastSeenByEosID.set(allPlayers[i].eosID, seenAt);
+    }
 
     // Sync check for uncached players (No .filter/.map to save memory)
     const uncachedIDs = [];
@@ -509,6 +563,59 @@ export default class EloTracker extends BasePlugin {
         // else: still within retry window but below threshold — leave pending and retry next tick
       }
     }
+  }
+
+  /**
+   * PLAYER_WOUNDED — kill credit at the down (Squad scoreboard semantics).
+   * No credit for self-wounds or teamkills; the explicit `teamkill` flag is
+   * preferred, with an equal-teamID fallback when the flag is absent.
+   */
+  onPlayerWounded(data) {
+    if (!this.ready) return;
+    const victim = data?.victim;
+    const attacker = data?.attacker;
+    if (!victim?.eosID || !attacker?.eosID) return;
+    if (data?.teamkill === true) return;
+    if (attacker.eosID === victim.eosID) return;
+    if (attacker.teamID != null && victim.teamID != null && attacker.teamID === victim.teamID) return;
+    this.killsByEosID.set(attacker.eosID, (this.killsByEosID.get(attacker.eosID) ?? 0) + 1);
+  }
+
+  /**
+   * PLAYER_DIED — death counted at give-up/bleed-out (a revive negates the
+   * death). Suicides, teamkills and environment deaths all count for the victim.
+   */
+  onPlayerDied(data) {
+    if (!this.ready) return;
+    const victim = data?.victim;
+    if (!victim?.eosID) return;
+    this.deathsByEosID.set(victim.eosID, (this.deathsByEosID.get(victim.eosID) ?? 0) + 1);
+  }
+
+  /**
+   * Detect quitters at round end: participation below the threshold AND absent
+   * from the server for longer than the grace window.
+   *
+   * NOTE: SquadJS has no reliable disconnect event (PLAYER_DISCONNECTED never
+   * fires) — departure is inferred from server.players polling at ~30s
+   * granularity, and a crash is indistinguishable from a rage-quit. This flag
+   * is therefore recorded for inspection, and only feeds the rating engine
+   * when `enableQuitPenalty` is on.
+   *
+   * @param {number} roundEndTime
+   * @returns {Set<string>} eosIDs of detected quitters
+   */
+  _detectQuittersAt(roundEndTime) {
+    const quitters = new Set();
+    const quitGraceMs = (this.options.quitGraceSeconds ?? 60) * 1000;
+    const threshold = this.options.quitParticipationThreshold ?? 0.5;
+
+    for (const participant of this.session.snapshotParticipants(roundEndTime)) {
+      if (participant.participationRatio >= threshold) continue;
+      const lastSeen = this.lastSeenByEosID.get(participant.eosID) ?? 0;
+      if (roundEndTime - lastSeen > quitGraceMs) quitters.add(participant.eosID);
+    }
+    return quitters;
   }
 
   /**

@@ -82,10 +82,10 @@ function buildDefaults() {
     quitParams: {
       mQ: -SCALE * 0.5, // −2.083
       vQ: 1.0
-    },
-
-    // --- Per-round behavioural thresholds (plugin-level, not paper) ---
-    quitParticipationThreshold: 0.5 // below this AND absent at round end ⇒ quit
+    }
+    // NOTE: quit *detection* thresholds (quitGraceSeconds,
+    // quitParticipationThreshold, enableQuitPenalty) are plugin options in
+    // plugins/elo-tracker.js — they govern observation, not inference.
   };
 }
 
