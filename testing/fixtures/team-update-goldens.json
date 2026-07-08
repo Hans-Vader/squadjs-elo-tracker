@@ -1,0 +1,4422 @@
+{
+ "generatedFrom": "original EloCalculator.computeTeamUpdate (pre-TrueSkill2 refactor)",
+ "goldens": [
+  {
+   "name": "1v1 even, team1win",
+   "input": {
+    "team1": [
+     {
+      "mu": 25,
+      "sigma": 8.333,
+      "participationRatio": 1
+     }
+    ],
+    "team2": [
+     {
+      "mu": 25,
+      "sigma": 8.333,
+      "participationRatio": 1
+     }
+    ],
+    "outcome": "team1win"
+   },
+   "expected": {
+    "team1Updates": [
+     {
+      "deltaMu": 4.223843681083917,
+      "deltaSigma": 1.1367988515696341,
+      "vVal": 0.8014564607255107,
+      "wVal": 0.6378400403837944
+     }
+    ],
+    "team2Updates": [
+     {
+      "deltaMu": -4.223843681083917,
+      "deltaSigma": 1.1367988515696341,
+      "vVal": 0.8014564607255107,
+      "wVal": 0.6378400403837944
+     }
+    ],
+    "debug": {
+     "teamMu1": 25,
+     "teamMu2": 25,
+     "teamSigmaSq1": 86.80000011111112,
+     "teamSigmaSq2": 86.80000011111112,
+     "c": 13.175735282033495,
+     "effectiveN1": 1,
+     "effectiveN2": 1,
+     "nTotal": 2,
+     "epsilon": 0.07385418169014642,
+     "tRaw": 0,
+     "vVal": 0.8014564607255107,
+     "wVal": 0.6378400403837944
+    }
+   }
+  },
+  {
+   "name": "1v1 even, team2win",
+   "input": {
+    "team1": [
+     {
+      "mu": 25,
+      "sigma": 8.333,
+      "participationRatio": 1
+     }
+    ],
+    "team2": [
+     {
+      "mu": 25,
+      "sigma": 8.333,
+      "participationRatio": 1
+     }
+    ],
+    "outcome": "team2win"
+   },
+   "expected": {
+    "team1Updates": [
+     {
+      "deltaMu": -4.223843681083917,
+      "deltaSigma": 1.1367988515696341,
+      "vVal": 0.8014564607255107,
+      "wVal": 0.6378400403837944
+     }
+    ],
+    "team2Updates": [
+     {
+      "deltaMu": 4.223843681083917,
+      "deltaSigma": 1.1367988515696341,
+      "vVal": 0.8014564607255107,
+      "wVal": 0.6378400403837944
+     }
+    ],
+    "debug": {
+     "teamMu1": 25,
+     "teamMu2": 25,
+     "teamSigmaSq1": 86.80000011111112,
+     "teamSigmaSq2": 86.80000011111112,
+     "c": 13.175735282033495,
+     "effectiveN1": 1,
+     "effectiveN2": 1,
+     "nTotal": 2,
+     "epsilon": 0.07385418169014642,
+     "tRaw": 0,
+     "vVal": 0.8014564607255107,
+     "wVal": 0.6378400403837944
+    }
+   }
+  },
+  {
+   "name": "1v1 even, draw",
+   "input": {
+    "team1": [
+     {
+      "mu": 25,
+      "sigma": 8.333,
+      "participationRatio": 1
+     }
+    ],
+    "team2": [
+     {
+      "mu": 25,
+      "sigma": 8.333,
+      "participationRatio": 1
+     }
+    ],
+    "outcome": "draw"
+   },
+   "expected": {
+    "team1Updates": [
+     {
+      "deltaMu": 0,
+      "deltaSigma": 1.8733761210130382,
+      "vVal": 0,
+      "wVal": 0.9999833365371097
+     }
+    ],
+    "team2Updates": [
+     {
+      "deltaMu": 0,
+      "deltaSigma": 1.8733761210130382,
+      "vVal": 0,
+      "wVal": 0.9999833365371097
+     }
+    ],
+    "debug": {
+     "teamMu1": 25,
+     "teamMu2": 25,
+     "teamSigmaSq1": 86.80000011111112,
+     "teamSigmaSq2": 86.80000011111112,
+     "c": 13.175735282033495,
+     "effectiveN1": 1,
+     "effectiveN2": 1,
+     "nTotal": 2,
+     "epsilon": 0.07385418169014642,
+     "tRaw": 0,
+     "vVal": 0,
+     "wVal": 0.9999833365371097
+    }
+   }
+  },
+  {
+   "name": "1v1 favorite wins",
+   "input": {
+    "team1": [
+     {
+      "mu": 30,
+      "sigma": 2,
+      "participationRatio": 1
+     }
+    ],
+    "team2": [
+     {
+      "mu": 20,
+      "sigma": 8,
+      "participationRatio": 1
+     }
+    ],
+    "outcome": "team1win"
+   },
+   "expected": {
+    "team1Updates": [
+     {
+      "deltaMu": 0.11654477440736158,
+      "deltaSigma": -0.0009672628364598701,
+      "vVal": 0.29530106772483133,
+      "wVal": 0.3764128268817997
+     }
+    ],
+    "team2Updates": [
+     {
+      "deltaMu": -1.8647163905177853,
+      "deltaSigma": 0.9961998416953541,
+      "vVal": 0.29530106772483133,
+      "wVal": 0.3764128268817997
+     }
+    ],
+    "debug": {
+     "teamMu1": 30,
+     "teamMu2": 20,
+     "teamSigmaSq1": 21.361111111111114,
+     "teamSigmaSq2": 81.36111111111111,
+     "c": 10.135197197007182,
+     "effectiveN1": 1,
+     "effectiveN2": 1,
+     "nTotal": 2,
+     "epsilon": 0.07385418169014642,
+     "tRaw": 0.9866606249114616,
+     "vVal": 0.29530106772483133,
+     "wVal": 0.3764128268817997
+    }
+   }
+  },
+  {
+   "name": "1v1 upset",
+   "input": {
+    "team1": [
+     {
+      "mu": 30,
+      "sigma": 2,
+      "participationRatio": 1
+     }
+    ],
+    "team2": [
+     {
+      "mu": 20,
+      "sigma": 8,
+      "participationRatio": 1
+     }
+    ],
+    "outcome": "team2win"
+   },
+   "expected": {
+    "team1Updates": [
+     {
+      "deltaMu": -0.6000040765645603,
+      "deltaSigma": 0.01559529324137987,
+      "vVal": 1.5202899087475035,
+      "wVal": 0.8001930127067349
+     }
+    ],
+    "team2Updates": [
+     {
+      "deltaMu": 9.600065225032965,
+      "deltaSigma": 2.3294460329985434,
+      "vVal": 1.5202899087475035,
+      "wVal": 0.8001930127067349
+     }
+    ],
+    "debug": {
+     "teamMu1": 30,
+     "teamMu2": 20,
+     "teamSigmaSq1": 21.361111111111114,
+     "teamSigmaSq2": 81.36111111111111,
+     "c": 10.135197197007182,
+     "effectiveN1": 1,
+     "effectiveN2": 1,
+     "nTotal": 2,
+     "epsilon": 0.07385418169014642,
+     "tRaw": 0.9866606249114616,
+     "vVal": 1.5202899087475035,
+     "wVal": 0.8001930127067349
+    }
+   }
+  },
+  {
+   "name": "4v4 even, team1win",
+   "input": {
+    "team1": [
+     {
+      "mu": 25,
+      "sigma": 8.333,
+      "participationRatio": 1
+     },
+     {
+      "mu": 25,
+      "sigma": 8.333,
+      "participationRatio": 1
+     },
+     {
+      "mu": 25,
+      "sigma": 8.333,
+      "participationRatio": 1
+     },
+     {
+      "mu": 25,
+      "sigma": 8.333,
+      "participationRatio": 1
+     }
+    ],
+    "team2": [
+     {
+      "mu": 25,
+      "sigma": 8.333,
+      "participationRatio": 1
+     },
+     {
+      "mu": 25,
+      "sigma": 8.333,
+      "participationRatio": 1
+     },
+     {
+      "mu": 25,
+      "sigma": 8.333,
+      "participationRatio": 1
+     },
+     {
+      "mu": 25,
+      "sigma": 8.333,
+      "participationRatio": 1
+     }
+    ],
+    "outcome": "team1win"
+   },
+   "expected": {
+    "team1Updates": [
+     {
+      "deltaMu": 2.1119218405419584,
+      "deltaSigma": 0.2662553348846082,
+      "vVal": 0.8014564607255107,
+      "wVal": 0.6378400403837944
+     },
+     {
+      "deltaMu": 2.1119218405419584,
+      "deltaSigma": 0.2662553348846082,
+      "vVal": 0.8014564607255107,
+      "wVal": 0.6378400403837944
+     },
+     {
+      "deltaMu": 2.1119218405419584,
+      "deltaSigma": 0.2662553348846082,
+      "vVal": 0.8014564607255107,
+      "wVal": 0.6378400403837944
+     },
+     {
+      "deltaMu": 2.1119218405419584,
+      "deltaSigma": 0.2662553348846082,
+      "vVal": 0.8014564607255107,
+      "wVal": 0.6378400403837944
+     }
+    ],
+    "team2Updates": [
+     {
+      "deltaMu": -2.1119218405419584,
+      "deltaSigma": 0.2662553348846082,
+      "vVal": 0.8014564607255107,
+      "wVal": 0.6378400403837944
+     },
+     {
+      "deltaMu": -2.1119218405419584,
+      "deltaSigma": 0.2662553348846082,
+      "vVal": 0.8014564607255107,
+      "wVal": 0.6378400403837944
+     },
+     {
+      "deltaMu": -2.1119218405419584,
+      "deltaSigma": 0.2662553348846082,
+      "vVal": 0.8014564607255107,
+      "wVal": 0.6378400403837944
+     },
+     {
+      "deltaMu": -2.1119218405419584,
+      "deltaSigma": 0.2662553348846082,
+      "vVal": 0.8014564607255107,
+      "wVal": 0.6378400403837944
+     }
+    ],
+    "debug": {
+     "teamMu1": 100,
+     "teamMu2": 100,
+     "teamSigmaSq1": 347.20000044444447,
+     "teamSigmaSq2": 347.20000044444447,
+     "c": 26.35147056406699,
+     "effectiveN1": 4,
+     "effectiveN2": 4,
+     "nTotal": 8,
+     "epsilon": 0.14770836338029283,
+     "tRaw": 0,
+     "vVal": 0.8014564607255107,
+     "wVal": 0.6378400403837944
+    }
+   }
+  },
+  {
+   "name": "5v3 asymmetric sizes",
+   "input": {
+    "team1": [
+     {
+      "mu": 24,
+      "sigma": 6,
+      "participationRatio": 1
+     },
+     {
+      "mu": 25,
+      "sigma": 6,
+      "participationRatio": 1
+     },
+     {
+      "mu": 26,
+      "sigma": 6,
+      "participationRatio": 1
+     },
+     {
+      "mu": 27,
+      "sigma": 6,
+      "participationRatio": 1
+     },
+     {
+      "mu": 28,
+      "sigma": 6,
+      "participationRatio": 1
+     }
+    ],
+    "team2": [
+     {
+      "mu": 27,
+      "sigma": 5,
+      "participationRatio": 1
+     },
+     {
+      "mu": 26,
+      "sigma": 5,
+      "participationRatio": 1
+     },
+     {
+      "mu": 25,
+      "sigma": 5,
+      "participationRatio": 1
+     }
+    ],
+    "outcome": "team1win"
+   },
+   "expected": {
+    "team1Updates": [
+     {
+      "deltaMu": 0.023946827133702858,
+      "deltaSigma": 0.004298213040580201,
+      "vVal": 0.013201775507355839,
+      "wVal": 0.0346658942184488
+     },
+     {
+      "deltaMu": 0.023946827133702858,
+      "deltaSigma": 0.004298213040580201,
+      "vVal": 0.013201775507355839,
+      "wVal": 0.0346658942184488
+     },
+     {
+      "deltaMu": 0.023946827133702858,
+      "deltaSigma": 0.004298213040580201,
+      "vVal": 0.013201775507355839,
+      "wVal": 0.0346658942184488
+     },
+     {
+      "deltaMu": 0.023946827133702858,
+      "deltaSigma": 0.004298213040580201,
+      "vVal": 0.013201775507355839,
+      "wVal": 0.0346658942184488
+     },
+     {
+      "deltaMu": 0.023946827133702858,
+      "deltaSigma": 0.004298213040580201,
+      "vVal": 0.013201775507355839,
+      "wVal": 0.0346658942184488
+     }
+    ],
+    "team2Updates": [
+     {
+      "deltaMu": -0.01662974106507143,
+      "deltaSigma": -0.0007493611947566592,
+      "vVal": 0.013201775507355839,
+      "wVal": 0.0346658942184488
+     },
+     {
+      "deltaMu": -0.01662974106507143,
+      "deltaSigma": -0.0007493611947566592,
+      "vVal": 0.013201775507355839,
+      "wVal": 0.0346658942184488
+     },
+     {
+      "deltaMu": -0.01662974106507143,
+      "deltaSigma": -0.0007493611947566592,
+      "vVal": 0.013201775507355839,
+      "wVal": 0.0346658942184488
+     }
+    ],
+    "debug": {
+     "teamMu1": 130,
+     "teamMu2": 78,
+     "teamSigmaSq1": 266.80555555555554,
+     "teamSigmaSq2": 127.08333333333334,
+     "c": 19.846634195472262,
+     "effectiveN1": 5,
+     "effectiveN2": 3,
+     "nTotal": 8,
+     "epsilon": 0.14770836338029283,
+     "tRaw": 2.620091622984772,
+     "vVal": 0.013201775507355839,
+     "wVal": 0.0346658942184488
+    }
+   }
+  },
+  {
+   "name": "4v4 mixed ratios, team2win",
+   "input": {
+    "team1": [
+     {
+      "mu": 30,
+      "sigma": 5,
+      "participationRatio": 1
+     },
+     {
+      "mu": 28,
+      "sigma": 6,
+      "participationRatio": 0.8
+     },
+     {
+      "mu": 22,
+      "sigma": 7,
+      "participationRatio": 0.5
+     },
+     {
+      "mu": 20,
+      "sigma": 8.333,
+      "participationRatio": 0.2
+     }
+    ],
+    "team2": [
+     {
+      "mu": 26,
+      "sigma": 4,
+      "participationRatio": 1
+     },
+     {
+      "mu": 25,
+      "sigma": 5,
+      "participationRatio": 0.9
+     },
+     {
+      "mu": 24,
+      "sigma": 6,
+      "participationRatio": 0.6
+     },
+     {
+      "mu": 23,
+      "sigma": 7,
+      "participationRatio": 0.3
+     }
+    ],
+    "outcome": "team2win"
+   },
+   "expected": {
+    "team1Updates": [
+     {
+      "deltaMu": -1.1028408284187705,
+      "deltaSigma": 0.14165073586174248,
+      "vVal": 0.7099440218674288,
+      "wVal": 0.6045896325820367
+     },
+     {
+      "deltaMu": -1.5880907929230295,
+      "deltaSigma": 0.25219720397170864,
+      "vVal": 0.7099440218674288,
+      "wVal": 0.6045896325820367
+     },
+     {
+      "deltaMu": -2.16156802370079,
+      "deltaSigma": 0.40774494046609977,
+      "vVal": 0.7099440218674288,
+      "wVal": 0.6045896325820367
+     },
+     {
+      "deltaMu": -3.0632016747695627,
+      "deltaSigma": 0.7010986486224722,
+      "vVal": 0.7099440218674288,
+      "wVal": 0.6045896325820367
+     }
+    ],
+    "team2Updates": [
+     {
+      "deltaMu": 0.7058181301880132,
+      "deltaSigma": 0.06745410940499186,
+      "vVal": 0.7099440218674288,
+      "wVal": 0.6045896325820367
+     },
+     {
+      "deltaMu": 1.1028408284187705,
+      "deltaSigma": 0.14165073586174248,
+      "vVal": 0.7099440218674288,
+      "wVal": 0.6045896325820367
+     },
+     {
+      "deltaMu": 1.5880907929230295,
+      "deltaSigma": 0.25219720397170864,
+      "vVal": 0.7099440218674288,
+      "wVal": 0.6045896325820367
+     },
+     {
+      "deltaMu": 2.16156802370079,
+      "deltaSigma": 0.40774494046609977,
+      "vVal": 0.7099440218674288,
+      "wVal": 0.6045896325820367
+     }
+    ],
+    "debug": {
+     "teamMu1": 67.4,
+     "teamMu2": 69.8,
+     "teamSigmaSq1": 135.5905555777778,
+     "teamSigmaSq2": 123.41111111111111,
+     "c": 16.09352872085202,
+     "effectiveN1": 2.5,
+     "effectiveN2": 2.8,
+     "nTotal": 5.3,
+     "epsilon": 0.12022589740056451,
+     "tRaw": -0.1491282640139925,
+     "vVal": 0.7099440218674288,
+     "wVal": 0.6045896325820367
+    }
+   }
+  },
+  {
+   "name": "4v4 asymmetric, draw",
+   "input": {
+    "team1": [
+     {
+      "mu": 27,
+      "sigma": 6,
+      "participationRatio": 1
+     },
+     {
+      "mu": 27,
+      "sigma": 6,
+      "participationRatio": 1
+     },
+     {
+      "mu": 27,
+      "sigma": 6,
+      "participationRatio": 1
+     },
+     {
+      "mu": 27,
+      "sigma": 6,
+      "participationRatio": 1
+     }
+    ],
+    "team2": [
+     {
+      "mu": 23,
+      "sigma": 6,
+      "participationRatio": 1
+     },
+     {
+      "mu": 23,
+      "sigma": 6,
+      "participationRatio": 1
+     },
+     {
+      "mu": 23,
+      "sigma": 6,
+      "participationRatio": 1
+     },
+     {
+      "mu": 23,
+      "sigma": 6,
+      "participationRatio": 1
+     }
+    ],
+    "outcome": "draw"
+   },
+   "expected": {
+    "team1Updates": [
+     {
+      "deltaMu": -1.349274974328304,
+      "deltaSigma": 0.253119947660835,
+      "vVal": -0.7743822507159456,
+      "wVal": 0.9999838176602054
+     },
+     {
+      "deltaMu": -1.349274974328304,
+      "deltaSigma": 0.253119947660835,
+      "vVal": -0.7743822507159456,
+      "wVal": 0.9999838176602054
+     },
+     {
+      "deltaMu": -1.349274974328304,
+      "deltaSigma": 0.253119947660835,
+      "vVal": -0.7743822507159456,
+      "wVal": 0.9999838176602054
+     },
+     {
+      "deltaMu": -1.349274974328304,
+      "deltaSigma": 0.253119947660835,
+      "vVal": -0.7743822507159456,
+      "wVal": 0.9999838176602054
+     }
+    ],
+    "team2Updates": [
+     {
+      "deltaMu": 1.349274974328304,
+      "deltaSigma": 0.253119947660835,
+      "vVal": 0.7743822507159456,
+      "wVal": 0.9999838176602054
+     },
+     {
+      "deltaMu": 1.349274974328304,
+      "deltaSigma": 0.253119947660835,
+      "vVal": 0.7743822507159456,
+      "wVal": 0.9999838176602054
+     },
+     {
+      "deltaMu": 1.349274974328304,
+      "deltaSigma": 0.253119947660835,
+      "vVal": 0.7743822507159456,
+      "wVal": 0.9999838176602054
+     },
+     {
+      "deltaMu": 1.349274974328304,
+      "deltaSigma": 0.253119947660835,
+      "vVal": 0.7743822507159456,
+      "wVal": 0.9999838176602054
+     }
+    ],
+    "debug": {
+     "teamMu1": 108,
+     "teamMu2": 92,
+     "teamSigmaSq1": 213.44444444444446,
+     "teamSigmaSq2": 213.44444444444446,
+     "c": 20.661289623082315,
+     "effectiveN1": 4,
+     "effectiveN2": 4,
+     "nTotal": 8,
+     "epsilon": 0.14770836338029283,
+     "tRaw": 0.7743950301207322,
+     "vVal": -0.7743822507159456,
+     "wVal": 0.9999838176602054
+    }
+   }
+  },
+  {
+   "name": "veterans vs rookies",
+   "input": {
+    "team1": [
+     {
+      "mu": 35,
+      "sigma": 0.5,
+      "participationRatio": 1
+     },
+     {
+      "mu": 35,
+      "sigma": 0.5,
+      "participationRatio": 1
+     },
+     {
+      "mu": 35,
+      "sigma": 0.5,
+      "participationRatio": 1
+     }
+    ],
+    "team2": [
+     {
+      "mu": 25,
+      "sigma": 8.333,
+      "participationRatio": 1
+     },
+     {
+      "mu": 25,
+      "sigma": 8.333,
+      "participationRatio": 1
+     },
+     {
+      "mu": 25,
+      "sigma": 8.333,
+      "participationRatio": 1
+     }
+    ],
+    "outcome": "team2win"
+   },
+   "expected": {
+    "team1Updates": [
+     {
+      "deltaMu": -0.029838124202347414,
+      "deltaSigma": -0.05886239014772554,
+      "vVal": 2.1123481321074795,
+      "wVal": 0.8661722516185456
+     },
+     {
+      "deltaMu": -0.029838124202347414,
+      "deltaSigma": -0.05886239014772554,
+      "vVal": 2.1123481321074795,
+      "wVal": 0.8661722516185456
+     },
+     {
+      "deltaMu": -0.029838124202347414,
+      "deltaSigma": -0.05886239014772554,
+      "vVal": 2.1123481321074795,
+      "wVal": 0.8661722516185456
+     }
+    ],
+    "team2Updates": [
+     {
+      "deltaMu": 8.287704777820062,
+      "deltaSigma": 0.8384712650425188,
+      "vVal": 2.1123481321074795,
+      "wVal": 0.8661722516185456
+     },
+     {
+      "deltaMu": 8.287704777820062,
+      "deltaSigma": 0.8384712650425188,
+      "vVal": 2.1123481321074795,
+      "wVal": 0.8661722516185456
+     },
+     {
+      "deltaMu": 8.287704777820062,
+      "deltaSigma": 0.8384712650425188,
+      "vVal": 2.1123481321074795,
+      "wVal": 0.8661722516185456
+     }
+    ],
+    "debug": {
+     "teamMu1": 105,
+     "teamMu2": 75,
+     "teamSigmaSq1": 52.83333333333334,
+     "teamSigmaSq2": 260.40000033333337,
+     "c": 17.698399183730338,
+     "effectiveN1": 3,
+     "effectiveN2": 3,
+     "nTotal": 6,
+     "epsilon": 0.12791919503875665,
+     "tRaw": 1.695068558945048,
+     "vVal": 2.1123481321074795,
+     "wVal": 0.8661722516185456
+    }
+   }
+  },
+  {
+   "name": "60v60 over slot cap",
+   "input": {
+    "team1": [
+     {
+      "mu": 20,
+      "sigma": 4,
+      "participationRatio": 1
+     },
+     {
+      "mu": 21,
+      "sigma": 5,
+      "participationRatio": 1
+     },
+     {
+      "mu": 22,
+      "sigma": 6,
+      "participationRatio": 1
+     },
+     {
+      "mu": 23,
+      "sigma": 7,
+      "participationRatio": 1
+     },
+     {
+      "mu": 24,
+      "sigma": 8,
+      "participationRatio": 1
+     },
+     {
+      "mu": 25,
+      "sigma": 4,
+      "participationRatio": 1
+     },
+     {
+      "mu": 26,
+      "sigma": 5,
+      "participationRatio": 1
+     },
+     {
+      "mu": 27,
+      "sigma": 6,
+      "participationRatio": 1
+     },
+     {
+      "mu": 28,
+      "sigma": 7,
+      "participationRatio": 1
+     },
+     {
+      "mu": 29,
+      "sigma": 8,
+      "participationRatio": 1
+     },
+     {
+      "mu": 30,
+      "sigma": 4,
+      "participationRatio": 1
+     },
+     {
+      "mu": 20,
+      "sigma": 5,
+      "participationRatio": 1
+     },
+     {
+      "mu": 21,
+      "sigma": 6,
+      "participationRatio": 1
+     },
+     {
+      "mu": 22,
+      "sigma": 7,
+      "participationRatio": 1
+     },
+     {
+      "mu": 23,
+      "sigma": 8,
+      "participationRatio": 1
+     },
+     {
+      "mu": 24,
+      "sigma": 4,
+      "participationRatio": 1
+     },
+     {
+      "mu": 25,
+      "sigma": 5,
+      "participationRatio": 1
+     },
+     {
+      "mu": 26,
+      "sigma": 6,
+      "participationRatio": 1
+     },
+     {
+      "mu": 27,
+      "sigma": 7,
+      "participationRatio": 1
+     },
+     {
+      "mu": 28,
+      "sigma": 8,
+      "participationRatio": 1
+     },
+     {
+      "mu": 29,
+      "sigma": 4,
+      "participationRatio": 1
+     },
+     {
+      "mu": 30,
+      "sigma": 5,
+      "participationRatio": 1
+     },
+     {
+      "mu": 20,
+      "sigma": 6,
+      "participationRatio": 1
+     },
+     {
+      "mu": 21,
+      "sigma": 7,
+      "participationRatio": 1
+     },
+     {
+      "mu": 22,
+      "sigma": 8,
+      "participationRatio": 1
+     },
+     {
+      "mu": 23,
+      "sigma": 4,
+      "participationRatio": 1
+     },
+     {
+      "mu": 24,
+      "sigma": 5,
+      "participationRatio": 1
+     },
+     {
+      "mu": 25,
+      "sigma": 6,
+      "participationRatio": 1
+     },
+     {
+      "mu": 26,
+      "sigma": 7,
+      "participationRatio": 1
+     },
+     {
+      "mu": 27,
+      "sigma": 8,
+      "participationRatio": 1
+     },
+     {
+      "mu": 28,
+      "sigma": 4,
+      "participationRatio": 1
+     },
+     {
+      "mu": 29,
+      "sigma": 5,
+      "participationRatio": 1
+     },
+     {
+      "mu": 30,
+      "sigma": 6,
+      "participationRatio": 1
+     },
+     {
+      "mu": 20,
+      "sigma": 7,
+      "participationRatio": 1
+     },
+     {
+      "mu": 21,
+      "sigma": 8,
+      "participationRatio": 1
+     },
+     {
+      "mu": 22,
+      "sigma": 4,
+      "participationRatio": 1
+     },
+     {
+      "mu": 23,
+      "sigma": 5,
+      "participationRatio": 1
+     },
+     {
+      "mu": 24,
+      "sigma": 6,
+      "participationRatio": 1
+     },
+     {
+      "mu": 25,
+      "sigma": 7,
+      "participationRatio": 1
+     },
+     {
+      "mu": 26,
+      "sigma": 8,
+      "participationRatio": 1
+     },
+     {
+      "mu": 27,
+      "sigma": 4,
+      "participationRatio": 1
+     },
+     {
+      "mu": 28,
+      "sigma": 5,
+      "participationRatio": 1
+     },
+     {
+      "mu": 29,
+      "sigma": 6,
+      "participationRatio": 1
+     },
+     {
+      "mu": 30,
+      "sigma": 7,
+      "participationRatio": 1
+     },
+     {
+      "mu": 20,
+      "sigma": 8,
+      "participationRatio": 1
+     },
+     {
+      "mu": 21,
+      "sigma": 4,
+      "participationRatio": 1
+     },
+     {
+      "mu": 22,
+      "sigma": 5,
+      "participationRatio": 1
+     },
+     {
+      "mu": 23,
+      "sigma": 6,
+      "participationRatio": 1
+     },
+     {
+      "mu": 24,
+      "sigma": 7,
+      "participationRatio": 1
+     },
+     {
+      "mu": 25,
+      "sigma": 8,
+      "participationRatio": 1
+     },
+     {
+      "mu": 26,
+      "sigma": 4,
+      "participationRatio": 1
+     },
+     {
+      "mu": 27,
+      "sigma": 5,
+      "participationRatio": 1
+     },
+     {
+      "mu": 28,
+      "sigma": 6,
+      "participationRatio": 1
+     },
+     {
+      "mu": 29,
+      "sigma": 7,
+      "participationRatio": 1
+     },
+     {
+      "mu": 30,
+      "sigma": 8,
+      "participationRatio": 1
+     },
+     {
+      "mu": 20,
+      "sigma": 4,
+      "participationRatio": 1
+     },
+     {
+      "mu": 21,
+      "sigma": 5,
+      "participationRatio": 1
+     },
+     {
+      "mu": 22,
+      "sigma": 6,
+      "participationRatio": 1
+     },
+     {
+      "mu": 23,
+      "sigma": 7,
+      "participationRatio": 1
+     },
+     {
+      "mu": 24,
+      "sigma": 8,
+      "participationRatio": 1
+     }
+    ],
+    "team2": [
+     {
+      "mu": 21,
+      "sigma": 3,
+      "participationRatio": 1
+     },
+     {
+      "mu": 22,
+      "sigma": 4,
+      "participationRatio": 1
+     },
+     {
+      "mu": 23,
+      "sigma": 5,
+      "participationRatio": 1
+     },
+     {
+      "mu": 24,
+      "sigma": 6,
+      "participationRatio": 1
+     },
+     {
+      "mu": 25,
+      "sigma": 7,
+      "participationRatio": 1
+     },
+     {
+      "mu": 26,
+      "sigma": 8,
+      "participationRatio": 1
+     },
+     {
+      "mu": 27,
+      "sigma": 3,
+      "participationRatio": 1
+     },
+     {
+      "mu": 28,
+      "sigma": 4,
+      "participationRatio": 1
+     },
+     {
+      "mu": 29,
+      "sigma": 5,
+      "participationRatio": 1
+     },
+     {
+      "mu": 21,
+      "sigma": 6,
+      "participationRatio": 1
+     },
+     {
+      "mu": 22,
+      "sigma": 7,
+      "participationRatio": 1
+     },
+     {
+      "mu": 23,
+      "sigma": 8,
+      "participationRatio": 1
+     },
+     {
+      "mu": 24,
+      "sigma": 3,
+      "participationRatio": 1
+     },
+     {
+      "mu": 25,
+      "sigma": 4,
+      "participationRatio": 1
+     },
+     {
+      "mu": 26,
+      "sigma": 5,
+      "participationRatio": 1
+     },
+     {
+      "mu": 27,
+      "sigma": 6,
+      "participationRatio": 1
+     },
+     {
+      "mu": 28,
+      "sigma": 7,
+      "participationRatio": 1
+     },
+     {
+      "mu": 29,
+      "sigma": 8,
+      "participationRatio": 1
+     },
+     {
+      "mu": 21,
+      "sigma": 3,
+      "participationRatio": 1
+     },
+     {
+      "mu": 22,
+      "sigma": 4,
+      "participationRatio": 1
+     },
+     {
+      "mu": 23,
+      "sigma": 5,
+      "participationRatio": 1
+     },
+     {
+      "mu": 24,
+      "sigma": 6,
+      "participationRatio": 1
+     },
+     {
+      "mu": 25,
+      "sigma": 7,
+      "participationRatio": 1
+     },
+     {
+      "mu": 26,
+      "sigma": 8,
+      "participationRatio": 1
+     },
+     {
+      "mu": 27,
+      "sigma": 3,
+      "participationRatio": 1
+     },
+     {
+      "mu": 28,
+      "sigma": 4,
+      "participationRatio": 1
+     },
+     {
+      "mu": 29,
+      "sigma": 5,
+      "participationRatio": 1
+     },
+     {
+      "mu": 21,
+      "sigma": 6,
+      "participationRatio": 1
+     },
+     {
+      "mu": 22,
+      "sigma": 7,
+      "participationRatio": 1
+     },
+     {
+      "mu": 23,
+      "sigma": 8,
+      "participationRatio": 1
+     },
+     {
+      "mu": 24,
+      "sigma": 3,
+      "participationRatio": 1
+     },
+     {
+      "mu": 25,
+      "sigma": 4,
+      "participationRatio": 1
+     },
+     {
+      "mu": 26,
+      "sigma": 5,
+      "participationRatio": 1
+     },
+     {
+      "mu": 27,
+      "sigma": 6,
+      "participationRatio": 1
+     },
+     {
+      "mu": 28,
+      "sigma": 7,
+      "participationRatio": 1
+     },
+     {
+      "mu": 29,
+      "sigma": 8,
+      "participationRatio": 1
+     },
+     {
+      "mu": 21,
+      "sigma": 3,
+      "participationRatio": 1
+     },
+     {
+      "mu": 22,
+      "sigma": 4,
+      "participationRatio": 1
+     },
+     {
+      "mu": 23,
+      "sigma": 5,
+      "participationRatio": 1
+     },
+     {
+      "mu": 24,
+      "sigma": 6,
+      "participationRatio": 1
+     },
+     {
+      "mu": 25,
+      "sigma": 7,
+      "participationRatio": 1
+     },
+     {
+      "mu": 26,
+      "sigma": 8,
+      "participationRatio": 1
+     },
+     {
+      "mu": 27,
+      "sigma": 3,
+      "participationRatio": 1
+     },
+     {
+      "mu": 28,
+      "sigma": 4,
+      "participationRatio": 1
+     },
+     {
+      "mu": 29,
+      "sigma": 5,
+      "participationRatio": 1
+     },
+     {
+      "mu": 21,
+      "sigma": 6,
+      "participationRatio": 1
+     },
+     {
+      "mu": 22,
+      "sigma": 7,
+      "participationRatio": 1
+     },
+     {
+      "mu": 23,
+      "sigma": 8,
+      "participationRatio": 1
+     },
+     {
+      "mu": 24,
+      "sigma": 3,
+      "participationRatio": 1
+     },
+     {
+      "mu": 25,
+      "sigma": 4,
+      "participationRatio": 1
+     },
+     {
+      "mu": 26,
+      "sigma": 5,
+      "participationRatio": 1
+     },
+     {
+      "mu": 27,
+      "sigma": 6,
+      "participationRatio": 1
+     },
+     {
+      "mu": 28,
+      "sigma": 7,
+      "participationRatio": 1
+     },
+     {
+      "mu": 29,
+      "sigma": 8,
+      "participationRatio": 1
+     },
+     {
+      "mu": 21,
+      "sigma": 3,
+      "participationRatio": 1
+     },
+     {
+      "mu": 22,
+      "sigma": 4,
+      "participationRatio": 1
+     },
+     {
+      "mu": 23,
+      "sigma": 5,
+      "participationRatio": 1
+     },
+     {
+      "mu": 24,
+      "sigma": 6,
+      "participationRatio": 1
+     },
+     {
+      "mu": 25,
+      "sigma": 7,
+      "participationRatio": 1
+     },
+     {
+      "mu": 26,
+      "sigma": 8,
+      "participationRatio": 1
+     }
+    ],
+    "outcome": "team1win"
+   },
+   "expected": {
+    "team1Updates": [
+     {
+      "deltaMu": 0.186208970530571,
+      "deltaSigma": -0.0038648507980658664,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": 0.2909515164540172,
+      "deltaSigma": 0.0014568178333291826,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": 0.4189701836937848,
+      "deltaSigma": 0.008114167789318394,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": 0.5702649722498737,
+      "deltaSigma": 0.01670256689489058,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": 0.744835882122284,
+      "deltaSigma": 0.02770798983758649,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": 0.186208970530571,
+      "deltaSigma": -0.0038648507980658664,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": 0.2909515164540172,
+      "deltaSigma": 0.0014568178333291826,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": 0.4189701836937848,
+      "deltaSigma": 0.008114167789318394,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": 0.5702649722498737,
+      "deltaSigma": 0.01670256689489058,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": 0.744835882122284,
+      "deltaSigma": 0.02770798983758649,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": 0.186208970530571,
+      "deltaSigma": -0.0038648507980658664,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": 0.2909515164540172,
+      "deltaSigma": 0.0014568178333291826,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": 0.4189701836937848,
+      "deltaSigma": 0.008114167789318394,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": 0.5702649722498737,
+      "deltaSigma": 0.01670256689489058,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": 0.744835882122284,
+      "deltaSigma": 0.02770798983758649,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": 0.186208970530571,
+      "deltaSigma": -0.0038648507980658664,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": 0.2909515164540172,
+      "deltaSigma": 0.0014568178333291826,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": 0.4189701836937848,
+      "deltaSigma": 0.008114167789318394,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": 0.5702649722498737,
+      "deltaSigma": 0.01670256689489058,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": 0.744835882122284,
+      "deltaSigma": 0.02770798983758649,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": 0.186208970530571,
+      "deltaSigma": -0.0038648507980658664,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": 0.2909515164540172,
+      "deltaSigma": 0.0014568178333291826,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": 0.4189701836937848,
+      "deltaSigma": 0.008114167789318394,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": 0.5702649722498737,
+      "deltaSigma": 0.01670256689489058,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": 0.744835882122284,
+      "deltaSigma": 0.02770798983758649,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": 0.186208970530571,
+      "deltaSigma": -0.0038648507980658664,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": 0.2909515164540172,
+      "deltaSigma": 0.0014568178333291826,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": 0.4189701836937848,
+      "deltaSigma": 0.008114167789318394,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": 0.5702649722498737,
+      "deltaSigma": 0.01670256689489058,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": 0.744835882122284,
+      "deltaSigma": 0.02770798983758649,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": 0.186208970530571,
+      "deltaSigma": -0.0038648507980658664,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": 0.2909515164540172,
+      "deltaSigma": 0.0014568178333291826,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": 0.4189701836937848,
+      "deltaSigma": 0.008114167789318394,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": 0.5702649722498737,
+      "deltaSigma": 0.01670256689489058,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": 0.744835882122284,
+      "deltaSigma": 0.02770798983758649,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": 0.186208970530571,
+      "deltaSigma": -0.0038648507980658664,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": 0.2909515164540172,
+      "deltaSigma": 0.0014568178333291826,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": 0.4189701836937848,
+      "deltaSigma": 0.008114167789318394,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": 0.5702649722498737,
+      "deltaSigma": 0.01670256689489058,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": 0.744835882122284,
+      "deltaSigma": 0.02770798983758649,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": 0.186208970530571,
+      "deltaSigma": -0.0038648507980658664,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": 0.2909515164540172,
+      "deltaSigma": 0.0014568178333291826,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": 0.4189701836937848,
+      "deltaSigma": 0.008114167789318394,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": 0.5702649722498737,
+      "deltaSigma": 0.01670256689489058,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": 0.744835882122284,
+      "deltaSigma": 0.02770798983758649,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": 0.186208970530571,
+      "deltaSigma": -0.0038648507980658664,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": 0.2909515164540172,
+      "deltaSigma": 0.0014568178333291826,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": 0.4189701836937848,
+      "deltaSigma": 0.008114167789318394,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": 0.5702649722498737,
+      "deltaSigma": 0.01670256689489058,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": 0.744835882122284,
+      "deltaSigma": 0.02770798983758649,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": 0.186208970530571,
+      "deltaSigma": -0.0038648507980658664,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": 0.2909515164540172,
+      "deltaSigma": 0.0014568178333291826,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": 0.4189701836937848,
+      "deltaSigma": 0.008114167789318394,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": 0.5702649722498737,
+      "deltaSigma": 0.01670256689489058,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": 0.744835882122284,
+      "deltaSigma": 0.02770798983758649,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": 0.186208970530571,
+      "deltaSigma": -0.0038648507980658664,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": 0.2909515164540172,
+      "deltaSigma": 0.0014568178333291826,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": 0.4189701836937848,
+      "deltaSigma": 0.008114167789318394,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": 0.5702649722498737,
+      "deltaSigma": 0.01670256689489058,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": 0.744835882122284,
+      "deltaSigma": 0.02770798983758649,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     }
+    ],
+    "team2Updates": [
+     {
+      "deltaMu": -0.1047425459234462,
+      "deltaSigma": -0.008739310598451233,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": -0.186208970530571,
+      "deltaSigma": -0.0038648507980658664,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": -0.2909515164540172,
+      "deltaSigma": 0.0014568178333291826,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": -0.4189701836937848,
+      "deltaSigma": 0.008114167789318394,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": -0.5702649722498737,
+      "deltaSigma": 0.01670256689489058,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": -0.744835882122284,
+      "deltaSigma": 0.02770798983758649,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": -0.1047425459234462,
+      "deltaSigma": -0.008739310598451233,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": -0.186208970530571,
+      "deltaSigma": -0.0038648507980658664,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": -0.2909515164540172,
+      "deltaSigma": 0.0014568178333291826,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": -0.4189701836937848,
+      "deltaSigma": 0.008114167789318394,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": -0.5702649722498737,
+      "deltaSigma": 0.01670256689489058,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": -0.744835882122284,
+      "deltaSigma": 0.02770798983758649,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": -0.1047425459234462,
+      "deltaSigma": -0.008739310598451233,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": -0.186208970530571,
+      "deltaSigma": -0.0038648507980658664,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": -0.2909515164540172,
+      "deltaSigma": 0.0014568178333291826,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": -0.4189701836937848,
+      "deltaSigma": 0.008114167789318394,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": -0.5702649722498737,
+      "deltaSigma": 0.01670256689489058,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": -0.744835882122284,
+      "deltaSigma": 0.02770798983758649,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": -0.1047425459234462,
+      "deltaSigma": -0.008739310598451233,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": -0.186208970530571,
+      "deltaSigma": -0.0038648507980658664,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": -0.2909515164540172,
+      "deltaSigma": 0.0014568178333291826,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": -0.4189701836937848,
+      "deltaSigma": 0.008114167789318394,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": -0.5702649722498737,
+      "deltaSigma": 0.01670256689489058,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": -0.744835882122284,
+      "deltaSigma": 0.02770798983758649,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": -0.1047425459234462,
+      "deltaSigma": -0.008739310598451233,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": -0.186208970530571,
+      "deltaSigma": -0.0038648507980658664,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": -0.2909515164540172,
+      "deltaSigma": 0.0014568178333291826,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": -0.4189701836937848,
+      "deltaSigma": 0.008114167789318394,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": -0.5702649722498737,
+      "deltaSigma": 0.01670256689489058,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": -0.744835882122284,
+      "deltaSigma": 0.02770798983758649,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": -0.1047425459234462,
+      "deltaSigma": -0.008739310598451233,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": -0.186208970530571,
+      "deltaSigma": -0.0038648507980658664,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": -0.2909515164540172,
+      "deltaSigma": 0.0014568178333291826,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": -0.4189701836937848,
+      "deltaSigma": 0.008114167789318394,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": -0.5702649722498737,
+      "deltaSigma": 0.01670256689489058,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": -0.744835882122284,
+      "deltaSigma": 0.02770798983758649,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": -0.1047425459234462,
+      "deltaSigma": -0.008739310598451233,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": -0.186208970530571,
+      "deltaSigma": -0.0038648507980658664,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": -0.2909515164540172,
+      "deltaSigma": 0.0014568178333291826,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": -0.4189701836937848,
+      "deltaSigma": 0.008114167789318394,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": -0.5702649722498737,
+      "deltaSigma": 0.01670256689489058,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": -0.744835882122284,
+      "deltaSigma": 0.02770798983758649,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": -0.1047425459234462,
+      "deltaSigma": -0.008739310598451233,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": -0.186208970530571,
+      "deltaSigma": -0.0038648507980658664,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": -0.2909515164540172,
+      "deltaSigma": 0.0014568178333291826,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": -0.4189701836937848,
+      "deltaSigma": 0.008114167789318394,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": -0.5702649722498737,
+      "deltaSigma": 0.01670256689489058,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": -0.744835882122284,
+      "deltaSigma": 0.02770798983758649,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": -0.1047425459234462,
+      "deltaSigma": -0.008739310598451233,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": -0.186208970530571,
+      "deltaSigma": -0.0038648507980658664,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": -0.2909515164540172,
+      "deltaSigma": 0.0014568178333291826,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": -0.4189701836937848,
+      "deltaSigma": 0.008114167789318394,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": -0.5702649722498737,
+      "deltaSigma": 0.01670256689489058,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": -0.744835882122284,
+      "deltaSigma": 0.02770798983758649,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": -0.1047425459234462,
+      "deltaSigma": -0.008739310598451233,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": -0.186208970530571,
+      "deltaSigma": -0.0038648507980658664,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": -0.2909515164540172,
+      "deltaSigma": 0.0014568178333291826,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": -0.4189701836937848,
+      "deltaSigma": 0.008114167789318394,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": -0.5702649722498737,
+      "deltaSigma": 0.01670256689489058,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     },
+     {
+      "deltaMu": -0.744835882122284,
+      "deltaSigma": 0.02770798983758649,
+      "vVal": 0.8468194299735315,
+      "wVal": 0.652835123399003
+     }
+    ],
+    "debug": {
+     "teamMu1": 1237.5,
+     "teamMu2": 1242.5,
+     "teamSigmaSq1": 2768.055555555559,
+     "teamSigmaSq2": 2526.3888888888914,
+     "c": 72.76293317647695,
+     "effectiveN1": 50,
+     "effectiveN2": 50,
+     "nTotal": 100,
+     "epsilon": 0.5222279269208588,
+     "tRaw": -0.06871630625270639,
+     "vVal": 0.8468194299735315,
+     "wVal": 0.652835123399003
+    }
+   }
+  },
+  {
+   "name": "60v55 mixed ratios, draw",
+   "input": {
+    "team1": [
+     {
+      "mu": 22,
+      "sigma": 5,
+      "participationRatio": 0.3
+     },
+     {
+      "mu": 23,
+      "sigma": 5,
+      "participationRatio": 0.37777777777777777
+     },
+     {
+      "mu": 24,
+      "sigma": 5,
+      "participationRatio": 0.4555555555555555
+     },
+     {
+      "mu": 25,
+      "sigma": 5,
+      "participationRatio": 0.5333333333333333
+     },
+     {
+      "mu": 26,
+      "sigma": 5,
+      "participationRatio": 0.611111111111111
+     },
+     {
+      "mu": 27,
+      "sigma": 5,
+      "participationRatio": 0.6888888888888889
+     },
+     {
+      "mu": 28,
+      "sigma": 5,
+      "participationRatio": 0.7666666666666666
+     },
+     {
+      "mu": 29,
+      "sigma": 5,
+      "participationRatio": 0.8444444444444443
+     },
+     {
+      "mu": 22,
+      "sigma": 5,
+      "participationRatio": 0.922222222222222
+     },
+     {
+      "mu": 23,
+      "sigma": 5,
+      "participationRatio": 1
+     },
+     {
+      "mu": 24,
+      "sigma": 5,
+      "participationRatio": 0.3
+     },
+     {
+      "mu": 25,
+      "sigma": 5,
+      "participationRatio": 0.37777777777777777
+     },
+     {
+      "mu": 26,
+      "sigma": 5,
+      "participationRatio": 0.4555555555555555
+     },
+     {
+      "mu": 27,
+      "sigma": 5,
+      "participationRatio": 0.5333333333333333
+     },
+     {
+      "mu": 28,
+      "sigma": 5,
+      "participationRatio": 0.611111111111111
+     },
+     {
+      "mu": 29,
+      "sigma": 5,
+      "participationRatio": 0.6888888888888889
+     },
+     {
+      "mu": 22,
+      "sigma": 5,
+      "participationRatio": 0.7666666666666666
+     },
+     {
+      "mu": 23,
+      "sigma": 5,
+      "participationRatio": 0.8444444444444443
+     },
+     {
+      "mu": 24,
+      "sigma": 5,
+      "participationRatio": 0.922222222222222
+     },
+     {
+      "mu": 25,
+      "sigma": 5,
+      "participationRatio": 1
+     },
+     {
+      "mu": 26,
+      "sigma": 5,
+      "participationRatio": 0.3
+     },
+     {
+      "mu": 27,
+      "sigma": 5,
+      "participationRatio": 0.37777777777777777
+     },
+     {
+      "mu": 28,
+      "sigma": 5,
+      "participationRatio": 0.4555555555555555
+     },
+     {
+      "mu": 29,
+      "sigma": 5,
+      "participationRatio": 0.5333333333333333
+     },
+     {
+      "mu": 22,
+      "sigma": 5,
+      "participationRatio": 0.611111111111111
+     },
+     {
+      "mu": 23,
+      "sigma": 5,
+      "participationRatio": 0.6888888888888889
+     },
+     {
+      "mu": 24,
+      "sigma": 5,
+      "participationRatio": 0.7666666666666666
+     },
+     {
+      "mu": 25,
+      "sigma": 5,
+      "participationRatio": 0.8444444444444443
+     },
+     {
+      "mu": 26,
+      "sigma": 5,
+      "participationRatio": 0.922222222222222
+     },
+     {
+      "mu": 27,
+      "sigma": 5,
+      "participationRatio": 1
+     },
+     {
+      "mu": 28,
+      "sigma": 5,
+      "participationRatio": 0.3
+     },
+     {
+      "mu": 29,
+      "sigma": 5,
+      "participationRatio": 0.37777777777777777
+     },
+     {
+      "mu": 22,
+      "sigma": 5,
+      "participationRatio": 0.4555555555555555
+     },
+     {
+      "mu": 23,
+      "sigma": 5,
+      "participationRatio": 0.5333333333333333
+     },
+     {
+      "mu": 24,
+      "sigma": 5,
+      "participationRatio": 0.611111111111111
+     },
+     {
+      "mu": 25,
+      "sigma": 5,
+      "participationRatio": 0.6888888888888889
+     },
+     {
+      "mu": 26,
+      "sigma": 5,
+      "participationRatio": 0.7666666666666666
+     },
+     {
+      "mu": 27,
+      "sigma": 5,
+      "participationRatio": 0.8444444444444443
+     },
+     {
+      "mu": 28,
+      "sigma": 5,
+      "participationRatio": 0.922222222222222
+     },
+     {
+      "mu": 29,
+      "sigma": 5,
+      "participationRatio": 1
+     },
+     {
+      "mu": 22,
+      "sigma": 5,
+      "participationRatio": 0.3
+     },
+     {
+      "mu": 23,
+      "sigma": 5,
+      "participationRatio": 0.37777777777777777
+     },
+     {
+      "mu": 24,
+      "sigma": 5,
+      "participationRatio": 0.4555555555555555
+     },
+     {
+      "mu": 25,
+      "sigma": 5,
+      "participationRatio": 0.5333333333333333
+     },
+     {
+      "mu": 26,
+      "sigma": 5,
+      "participationRatio": 0.611111111111111
+     },
+     {
+      "mu": 27,
+      "sigma": 5,
+      "participationRatio": 0.6888888888888889
+     },
+     {
+      "mu": 28,
+      "sigma": 5,
+      "participationRatio": 0.7666666666666666
+     },
+     {
+      "mu": 29,
+      "sigma": 5,
+      "participationRatio": 0.8444444444444443
+     },
+     {
+      "mu": 22,
+      "sigma": 5,
+      "participationRatio": 0.922222222222222
+     },
+     {
+      "mu": 23,
+      "sigma": 5,
+      "participationRatio": 1
+     },
+     {
+      "mu": 24,
+      "sigma": 5,
+      "participationRatio": 0.3
+     },
+     {
+      "mu": 25,
+      "sigma": 5,
+      "participationRatio": 0.37777777777777777
+     },
+     {
+      "mu": 26,
+      "sigma": 5,
+      "participationRatio": 0.4555555555555555
+     },
+     {
+      "mu": 27,
+      "sigma": 5,
+      "participationRatio": 0.5333333333333333
+     },
+     {
+      "mu": 28,
+      "sigma": 5,
+      "participationRatio": 0.611111111111111
+     },
+     {
+      "mu": 29,
+      "sigma": 5,
+      "participationRatio": 0.6888888888888889
+     },
+     {
+      "mu": 22,
+      "sigma": 5,
+      "participationRatio": 0.7666666666666666
+     },
+     {
+      "mu": 23,
+      "sigma": 5,
+      "participationRatio": 0.8444444444444443
+     },
+     {
+      "mu": 24,
+      "sigma": 5,
+      "participationRatio": 0.922222222222222
+     },
+     {
+      "mu": 25,
+      "sigma": 5,
+      "participationRatio": 1
+     }
+    ],
+    "team2": [
+     {
+      "mu": 23,
+      "sigma": 6,
+      "participationRatio": 0.4
+     },
+     {
+      "mu": 24,
+      "sigma": 6,
+      "participationRatio": 0.4857142857142857
+     },
+     {
+      "mu": 25,
+      "sigma": 6,
+      "participationRatio": 0.5714285714285714
+     },
+     {
+      "mu": 26,
+      "sigma": 6,
+      "participationRatio": 0.6571428571428571
+     },
+     {
+      "mu": 27,
+      "sigma": 6,
+      "participationRatio": 0.7428571428571429
+     },
+     {
+      "mu": 28,
+      "sigma": 6,
+      "participationRatio": 0.8285714285714285
+     },
+     {
+      "mu": 29,
+      "sigma": 6,
+      "participationRatio": 0.9142857142857143
+     },
+     {
+      "mu": 23,
+      "sigma": 6,
+      "participationRatio": 1
+     },
+     {
+      "mu": 24,
+      "sigma": 6,
+      "participationRatio": 0.4
+     },
+     {
+      "mu": 25,
+      "sigma": 6,
+      "participationRatio": 0.4857142857142857
+     },
+     {
+      "mu": 26,
+      "sigma": 6,
+      "participationRatio": 0.5714285714285714
+     },
+     {
+      "mu": 27,
+      "sigma": 6,
+      "participationRatio": 0.6571428571428571
+     },
+     {
+      "mu": 28,
+      "sigma": 6,
+      "participationRatio": 0.7428571428571429
+     },
+     {
+      "mu": 29,
+      "sigma": 6,
+      "participationRatio": 0.8285714285714285
+     },
+     {
+      "mu": 23,
+      "sigma": 6,
+      "participationRatio": 0.9142857142857143
+     },
+     {
+      "mu": 24,
+      "sigma": 6,
+      "participationRatio": 1
+     },
+     {
+      "mu": 25,
+      "sigma": 6,
+      "participationRatio": 0.4
+     },
+     {
+      "mu": 26,
+      "sigma": 6,
+      "participationRatio": 0.4857142857142857
+     },
+     {
+      "mu": 27,
+      "sigma": 6,
+      "participationRatio": 0.5714285714285714
+     },
+     {
+      "mu": 28,
+      "sigma": 6,
+      "participationRatio": 0.6571428571428571
+     },
+     {
+      "mu": 29,
+      "sigma": 6,
+      "participationRatio": 0.7428571428571429
+     },
+     {
+      "mu": 23,
+      "sigma": 6,
+      "participationRatio": 0.8285714285714285
+     },
+     {
+      "mu": 24,
+      "sigma": 6,
+      "participationRatio": 0.9142857142857143
+     },
+     {
+      "mu": 25,
+      "sigma": 6,
+      "participationRatio": 1
+     },
+     {
+      "mu": 26,
+      "sigma": 6,
+      "participationRatio": 0.4
+     },
+     {
+      "mu": 27,
+      "sigma": 6,
+      "participationRatio": 0.4857142857142857
+     },
+     {
+      "mu": 28,
+      "sigma": 6,
+      "participationRatio": 0.5714285714285714
+     },
+     {
+      "mu": 29,
+      "sigma": 6,
+      "participationRatio": 0.6571428571428571
+     },
+     {
+      "mu": 23,
+      "sigma": 6,
+      "participationRatio": 0.7428571428571429
+     },
+     {
+      "mu": 24,
+      "sigma": 6,
+      "participationRatio": 0.8285714285714285
+     },
+     {
+      "mu": 25,
+      "sigma": 6,
+      "participationRatio": 0.9142857142857143
+     },
+     {
+      "mu": 26,
+      "sigma": 6,
+      "participationRatio": 1
+     },
+     {
+      "mu": 27,
+      "sigma": 6,
+      "participationRatio": 0.4
+     },
+     {
+      "mu": 28,
+      "sigma": 6,
+      "participationRatio": 0.4857142857142857
+     },
+     {
+      "mu": 29,
+      "sigma": 6,
+      "participationRatio": 0.5714285714285714
+     },
+     {
+      "mu": 23,
+      "sigma": 6,
+      "participationRatio": 0.6571428571428571
+     },
+     {
+      "mu": 24,
+      "sigma": 6,
+      "participationRatio": 0.7428571428571429
+     },
+     {
+      "mu": 25,
+      "sigma": 6,
+      "participationRatio": 0.8285714285714285
+     },
+     {
+      "mu": 26,
+      "sigma": 6,
+      "participationRatio": 0.9142857142857143
+     },
+     {
+      "mu": 27,
+      "sigma": 6,
+      "participationRatio": 1
+     },
+     {
+      "mu": 28,
+      "sigma": 6,
+      "participationRatio": 0.4
+     },
+     {
+      "mu": 29,
+      "sigma": 6,
+      "participationRatio": 0.4857142857142857
+     },
+     {
+      "mu": 23,
+      "sigma": 6,
+      "participationRatio": 0.5714285714285714
+     },
+     {
+      "mu": 24,
+      "sigma": 6,
+      "participationRatio": 0.6571428571428571
+     },
+     {
+      "mu": 25,
+      "sigma": 6,
+      "participationRatio": 0.7428571428571429
+     },
+     {
+      "mu": 26,
+      "sigma": 6,
+      "participationRatio": 0.8285714285714285
+     },
+     {
+      "mu": 27,
+      "sigma": 6,
+      "participationRatio": 0.9142857142857143
+     },
+     {
+      "mu": 28,
+      "sigma": 6,
+      "participationRatio": 1
+     },
+     {
+      "mu": 29,
+      "sigma": 6,
+      "participationRatio": 0.4
+     },
+     {
+      "mu": 23,
+      "sigma": 6,
+      "participationRatio": 0.4857142857142857
+     },
+     {
+      "mu": 24,
+      "sigma": 6,
+      "participationRatio": 0.5714285714285714
+     },
+     {
+      "mu": 25,
+      "sigma": 6,
+      "participationRatio": 0.6571428571428571
+     },
+     {
+      "mu": 26,
+      "sigma": 6,
+      "participationRatio": 0.7428571428571429
+     },
+     {
+      "mu": 27,
+      "sigma": 6,
+      "participationRatio": 0.8285714285714285
+     },
+     {
+      "mu": 28,
+      "sigma": 6,
+      "participationRatio": 0.9142857142857143
+     }
+    ],
+    "outcome": "draw"
+   },
+   "expected": {
+    "team1Updates": [
+     {
+      "deltaMu": -0.0018064059635461078,
+      "deltaSigma": 0.010696497412044259,
+      "vVal": -0.00438951610669085,
+      "wVal": 0.9999751598052548
+     },
+     {
+      "deltaMu": -0.0018064059635461078,
+      "deltaSigma": 0.010696497412044259,
+      "vVal": -0.00438951610669085,
+      "wVal": 0.9999751598052548
+     },
+     {
+      "deltaMu": -0.0018064059635461078,
+      "deltaSigma": 0.010696497412044259,
+      "vVal": -0.00438951610669085,
+      "wVal": 0.9999751598052548
+     },
+     {
+      "deltaMu": -0.0018064059635461078,
+      "deltaSigma": 0.010696497412044259,
+      "vVal": -0.00438951610669085,
+      "wVal": 0.9999751598052548
+     },
+     {
+      "deltaMu": -0.0018064059635461078,
+      "deltaSigma": 0.010696497412044259,
+      "vVal": -0.00438951610669085,
+      "wVal": 0.9999751598052548
+     },
+     {
+      "deltaMu": -0.0018064059635461078,
+      "deltaSigma": 0.010696497412044259,
+      "vVal": -0.00438951610669085,
+      "wVal": 0.9999751598052548
+     },
+     {
+      "deltaMu": -0.0018064059635461078,
+      "deltaSigma": 0.010696497412044259,
+      "vVal": -0.00438951610669085,
+      "wVal": 0.9999751598052548
+     },
+     {
+      "deltaMu": -0.0018064059635461078,
+      "deltaSigma": 0.010696497412044259,
+      "vVal": -0.00438951610669085,
+      "wVal": 0.9999751598052548
+     },
+     {
+      "deltaMu": -0.0018064059635461078,
+      "deltaSigma": 0.010696497412044259,
+      "vVal": -0.00438951610669085,
+      "wVal": 0.9999751598052548
+     },
+     {
+      "deltaMu": -0.0018064059635461078,
+      "deltaSigma": 0.010696497412044259,
+      "vVal": -0.00438951610669085,
+      "wVal": 0.9999751598052548
+     },
+     {
+      "deltaMu": -0.0018064059635461078,
+      "deltaSigma": 0.010696497412044259,
+      "vVal": -0.00438951610669085,
+      "wVal": 0.9999751598052548
+     },
+     {
+      "deltaMu": -0.0018064059635461078,
+      "deltaSigma": 0.010696497412044259,
+      "vVal": -0.00438951610669085,
+      "wVal": 0.9999751598052548
+     },
+     {
+      "deltaMu": -0.0018064059635461078,
+      "deltaSigma": 0.010696497412044259,
+      "vVal": -0.00438951610669085,
+      "wVal": 0.9999751598052548
+     },
+     {
+      "deltaMu": -0.0018064059635461078,
+      "deltaSigma": 0.010696497412044259,
+      "vVal": -0.00438951610669085,
+      "wVal": 0.9999751598052548
+     },
+     {
+      "deltaMu": -0.0018064059635461078,
+      "deltaSigma": 0.010696497412044259,
+      "vVal": -0.00438951610669085,
+      "wVal": 0.9999751598052548
+     },
+     {
+      "deltaMu": -0.0018064059635461078,
+      "deltaSigma": 0.010696497412044259,
+      "vVal": -0.00438951610669085,
+      "wVal": 0.9999751598052548
+     },
+     {
+      "deltaMu": -0.0018064059635461078,
+      "deltaSigma": 0.010696497412044259,
+      "vVal": -0.00438951610669085,
+      "wVal": 0.9999751598052548
+     },
+     {
+      "deltaMu": -0.0018064059635461078,
+      "deltaSigma": 0.010696497412044259,
+      "vVal": -0.00438951610669085,
+      "wVal": 0.9999751598052548
+     },
+     {
+      "deltaMu": -0.0018064059635461078,
+      "deltaSigma": 0.010696497412044259,
+      "vVal": -0.00438951610669085,
+      "wVal": 0.9999751598052548
+     },
+     {
+      "deltaMu": -0.0018064059635461078,
+      "deltaSigma": 0.010696497412044259,
+      "vVal": -0.00438951610669085,
+      "wVal": 0.9999751598052548
+     },
+     {
+      "deltaMu": -0.0018064059635461078,
+      "deltaSigma": 0.010696497412044259,
+      "vVal": -0.00438951610669085,
+      "wVal": 0.9999751598052548
+     },
+     {
+      "deltaMu": -0.0018064059635461078,
+      "deltaSigma": 0.010696497412044259,
+      "vVal": -0.00438951610669085,
+      "wVal": 0.9999751598052548
+     },
+     {
+      "deltaMu": -0.0018064059635461078,
+      "deltaSigma": 0.010696497412044259,
+      "vVal": -0.00438951610669085,
+      "wVal": 0.9999751598052548
+     },
+     {
+      "deltaMu": -0.0018064059635461078,
+      "deltaSigma": 0.010696497412044259,
+      "vVal": -0.00438951610669085,
+      "wVal": 0.9999751598052548
+     },
+     {
+      "deltaMu": -0.0018064059635461078,
+      "deltaSigma": 0.010696497412044259,
+      "vVal": -0.00438951610669085,
+      "wVal": 0.9999751598052548
+     },
+     {
+      "deltaMu": -0.0018064059635461078,
+      "deltaSigma": 0.010696497412044259,
+      "vVal": -0.00438951610669085,
+      "wVal": 0.9999751598052548
+     },
+     {
+      "deltaMu": -0.0018064059635461078,
+      "deltaSigma": 0.010696497412044259,
+      "vVal": -0.00438951610669085,
+      "wVal": 0.9999751598052548
+     },
+     {
+      "deltaMu": -0.0018064059635461078,
+      "deltaSigma": 0.010696497412044259,
+      "vVal": -0.00438951610669085,
+      "wVal": 0.9999751598052548
+     },
+     {
+      "deltaMu": -0.0018064059635461078,
+      "deltaSigma": 0.010696497412044259,
+      "vVal": -0.00438951610669085,
+      "wVal": 0.9999751598052548
+     },
+     {
+      "deltaMu": -0.0018064059635461078,
+      "deltaSigma": 0.010696497412044259,
+      "vVal": -0.00438951610669085,
+      "wVal": 0.9999751598052548
+     },
+     {
+      "deltaMu": -0.0018064059635461078,
+      "deltaSigma": 0.010696497412044259,
+      "vVal": -0.00438951610669085,
+      "wVal": 0.9999751598052548
+     },
+     {
+      "deltaMu": -0.0018064059635461078,
+      "deltaSigma": 0.010696497412044259,
+      "vVal": -0.00438951610669085,
+      "wVal": 0.9999751598052548
+     },
+     {
+      "deltaMu": -0.0018064059635461078,
+      "deltaSigma": 0.010696497412044259,
+      "vVal": -0.00438951610669085,
+      "wVal": 0.9999751598052548
+     },
+     {
+      "deltaMu": -0.0018064059635461078,
+      "deltaSigma": 0.010696497412044259,
+      "vVal": -0.00438951610669085,
+      "wVal": 0.9999751598052548
+     },
+     {
+      "deltaMu": -0.0018064059635461078,
+      "deltaSigma": 0.010696497412044259,
+      "vVal": -0.00438951610669085,
+      "wVal": 0.9999751598052548
+     },
+     {
+      "deltaMu": -0.0018064059635461078,
+      "deltaSigma": 0.010696497412044259,
+      "vVal": -0.00438951610669085,
+      "wVal": 0.9999751598052548
+     },
+     {
+      "deltaMu": -0.0018064059635461078,
+      "deltaSigma": 0.010696497412044259,
+      "vVal": -0.00438951610669085,
+      "wVal": 0.9999751598052548
+     },
+     {
+      "deltaMu": -0.0018064059635461078,
+      "deltaSigma": 0.010696497412044259,
+      "vVal": -0.00438951610669085,
+      "wVal": 0.9999751598052548
+     },
+     {
+      "deltaMu": -0.0018064059635461078,
+      "deltaSigma": 0.010696497412044259,
+      "vVal": -0.00438951610669085,
+      "wVal": 0.9999751598052548
+     },
+     {
+      "deltaMu": -0.0018064059635461078,
+      "deltaSigma": 0.010696497412044259,
+      "vVal": -0.00438951610669085,
+      "wVal": 0.9999751598052548
+     },
+     {
+      "deltaMu": -0.0018064059635461078,
+      "deltaSigma": 0.010696497412044259,
+      "vVal": -0.00438951610669085,
+      "wVal": 0.9999751598052548
+     },
+     {
+      "deltaMu": -0.0018064059635461078,
+      "deltaSigma": 0.010696497412044259,
+      "vVal": -0.00438951610669085,
+      "wVal": 0.9999751598052548
+     },
+     {
+      "deltaMu": -0.0018064059635461078,
+      "deltaSigma": 0.010696497412044259,
+      "vVal": -0.00438951610669085,
+      "wVal": 0.9999751598052548
+     },
+     {
+      "deltaMu": -0.0018064059635461078,
+      "deltaSigma": 0.010696497412044259,
+      "vVal": -0.00438951610669085,
+      "wVal": 0.9999751598052548
+     },
+     {
+      "deltaMu": -0.0018064059635461078,
+      "deltaSigma": 0.010696497412044259,
+      "vVal": -0.00438951610669085,
+      "wVal": 0.9999751598052548
+     },
+     {
+      "deltaMu": -0.0018064059635461078,
+      "deltaSigma": 0.010696497412044259,
+      "vVal": -0.00438951610669085,
+      "wVal": 0.9999751598052548
+     },
+     {
+      "deltaMu": -0.0018064059635461078,
+      "deltaSigma": 0.010696497412044259,
+      "vVal": -0.00438951610669085,
+      "wVal": 0.9999751598052548
+     },
+     {
+      "deltaMu": -0.0018064059635461078,
+      "deltaSigma": 0.010696497412044259,
+      "vVal": -0.00438951610669085,
+      "wVal": 0.9999751598052548
+     },
+     {
+      "deltaMu": -0.0018064059635461078,
+      "deltaSigma": 0.010696497412044259,
+      "vVal": -0.00438951610669085,
+      "wVal": 0.9999751598052548
+     },
+     {
+      "deltaMu": -0.0018064059635461078,
+      "deltaSigma": 0.010696497412044259,
+      "vVal": -0.00438951610669085,
+      "wVal": 0.9999751598052548
+     },
+     {
+      "deltaMu": -0.0018064059635461078,
+      "deltaSigma": 0.010696497412044259,
+      "vVal": -0.00438951610669085,
+      "wVal": 0.9999751598052548
+     },
+     {
+      "deltaMu": -0.0018064059635461078,
+      "deltaSigma": 0.010696497412044259,
+      "vVal": -0.00438951610669085,
+      "wVal": 0.9999751598052548
+     },
+     {
+      "deltaMu": -0.0018064059635461078,
+      "deltaSigma": 0.010696497412044259,
+      "vVal": -0.00438951610669085,
+      "wVal": 0.9999751598052548
+     },
+     {
+      "deltaMu": -0.0018064059635461078,
+      "deltaSigma": 0.010696497412044259,
+      "vVal": -0.00438951610669085,
+      "wVal": 0.9999751598052548
+     },
+     {
+      "deltaMu": -0.0018064059635461078,
+      "deltaSigma": 0.010696497412044259,
+      "vVal": -0.00438951610669085,
+      "wVal": 0.9999751598052548
+     },
+     {
+      "deltaMu": -0.0018064059635461078,
+      "deltaSigma": 0.010696497412044259,
+      "vVal": -0.00438951610669085,
+      "wVal": 0.9999751598052548
+     },
+     {
+      "deltaMu": -0.0018064059635461078,
+      "deltaSigma": 0.010696497412044259,
+      "vVal": -0.00438951610669085,
+      "wVal": 0.9999751598052548
+     },
+     {
+      "deltaMu": -0.0018064059635461078,
+      "deltaSigma": 0.010696497412044259,
+      "vVal": -0.00438951610669085,
+      "wVal": 0.9999751598052548
+     },
+     {
+      "deltaMu": -0.0018064059635461078,
+      "deltaSigma": 0.010696497412044259,
+      "vVal": -0.00438951610669085,
+      "wVal": 0.9999751598052548
+     },
+     {
+      "deltaMu": -0.0018064059635461078,
+      "deltaSigma": 0.010696497412044259,
+      "vVal": -0.00438951610669085,
+      "wVal": 0.9999751598052548
+     }
+    ],
+    "team2Updates": [
+     {
+      "deltaMu": 0.0026012245875064186,
+      "deltaSigma": 0.024103859610191236,
+      "vVal": 0.00438951610669089,
+      "wVal": 0.999975159805264
+     },
+     {
+      "deltaMu": 0.0026012245875064186,
+      "deltaSigma": 0.024103859610191236,
+      "vVal": 0.00438951610669089,
+      "wVal": 0.999975159805264
+     },
+     {
+      "deltaMu": 0.0026012245875064186,
+      "deltaSigma": 0.024103859610191236,
+      "vVal": 0.00438951610669089,
+      "wVal": 0.999975159805264
+     },
+     {
+      "deltaMu": 0.0026012245875064186,
+      "deltaSigma": 0.024103859610191236,
+      "vVal": 0.00438951610669089,
+      "wVal": 0.999975159805264
+     },
+     {
+      "deltaMu": 0.0026012245875064186,
+      "deltaSigma": 0.024103859610191236,
+      "vVal": 0.00438951610669089,
+      "wVal": 0.999975159805264
+     },
+     {
+      "deltaMu": 0.0026012245875064186,
+      "deltaSigma": 0.024103859610191236,
+      "vVal": 0.00438951610669089,
+      "wVal": 0.999975159805264
+     },
+     {
+      "deltaMu": 0.0026012245875064186,
+      "deltaSigma": 0.024103859610191236,
+      "vVal": 0.00438951610669089,
+      "wVal": 0.999975159805264
+     },
+     {
+      "deltaMu": 0.0026012245875064186,
+      "deltaSigma": 0.024103859610191236,
+      "vVal": 0.00438951610669089,
+      "wVal": 0.999975159805264
+     },
+     {
+      "deltaMu": 0.0026012245875064186,
+      "deltaSigma": 0.024103859610191236,
+      "vVal": 0.00438951610669089,
+      "wVal": 0.999975159805264
+     },
+     {
+      "deltaMu": 0.0026012245875064186,
+      "deltaSigma": 0.024103859610191236,
+      "vVal": 0.00438951610669089,
+      "wVal": 0.999975159805264
+     },
+     {
+      "deltaMu": 0.0026012245875064186,
+      "deltaSigma": 0.024103859610191236,
+      "vVal": 0.00438951610669089,
+      "wVal": 0.999975159805264
+     },
+     {
+      "deltaMu": 0.0026012245875064186,
+      "deltaSigma": 0.024103859610191236,
+      "vVal": 0.00438951610669089,
+      "wVal": 0.999975159805264
+     },
+     {
+      "deltaMu": 0.0026012245875064186,
+      "deltaSigma": 0.024103859610191236,
+      "vVal": 0.00438951610669089,
+      "wVal": 0.999975159805264
+     },
+     {
+      "deltaMu": 0.0026012245875064186,
+      "deltaSigma": 0.024103859610191236,
+      "vVal": 0.00438951610669089,
+      "wVal": 0.999975159805264
+     },
+     {
+      "deltaMu": 0.0026012245875064186,
+      "deltaSigma": 0.024103859610191236,
+      "vVal": 0.00438951610669089,
+      "wVal": 0.999975159805264
+     },
+     {
+      "deltaMu": 0.0026012245875064186,
+      "deltaSigma": 0.024103859610191236,
+      "vVal": 0.00438951610669089,
+      "wVal": 0.999975159805264
+     },
+     {
+      "deltaMu": 0.0026012245875064186,
+      "deltaSigma": 0.024103859610191236,
+      "vVal": 0.00438951610669089,
+      "wVal": 0.999975159805264
+     },
+     {
+      "deltaMu": 0.0026012245875064186,
+      "deltaSigma": 0.024103859610191236,
+      "vVal": 0.00438951610669089,
+      "wVal": 0.999975159805264
+     },
+     {
+      "deltaMu": 0.0026012245875064186,
+      "deltaSigma": 0.024103859610191236,
+      "vVal": 0.00438951610669089,
+      "wVal": 0.999975159805264
+     },
+     {
+      "deltaMu": 0.0026012245875064186,
+      "deltaSigma": 0.024103859610191236,
+      "vVal": 0.00438951610669089,
+      "wVal": 0.999975159805264
+     },
+     {
+      "deltaMu": 0.0026012245875064186,
+      "deltaSigma": 0.024103859610191236,
+      "vVal": 0.00438951610669089,
+      "wVal": 0.999975159805264
+     },
+     {
+      "deltaMu": 0.0026012245875064186,
+      "deltaSigma": 0.024103859610191236,
+      "vVal": 0.00438951610669089,
+      "wVal": 0.999975159805264
+     },
+     {
+      "deltaMu": 0.0026012245875064186,
+      "deltaSigma": 0.024103859610191236,
+      "vVal": 0.00438951610669089,
+      "wVal": 0.999975159805264
+     },
+     {
+      "deltaMu": 0.0026012245875064186,
+      "deltaSigma": 0.024103859610191236,
+      "vVal": 0.00438951610669089,
+      "wVal": 0.999975159805264
+     },
+     {
+      "deltaMu": 0.0026012245875064186,
+      "deltaSigma": 0.024103859610191236,
+      "vVal": 0.00438951610669089,
+      "wVal": 0.999975159805264
+     },
+     {
+      "deltaMu": 0.0026012245875064186,
+      "deltaSigma": 0.024103859610191236,
+      "vVal": 0.00438951610669089,
+      "wVal": 0.999975159805264
+     },
+     {
+      "deltaMu": 0.0026012245875064186,
+      "deltaSigma": 0.024103859610191236,
+      "vVal": 0.00438951610669089,
+      "wVal": 0.999975159805264
+     },
+     {
+      "deltaMu": 0.0026012245875064186,
+      "deltaSigma": 0.024103859610191236,
+      "vVal": 0.00438951610669089,
+      "wVal": 0.999975159805264
+     },
+     {
+      "deltaMu": 0.0026012245875064186,
+      "deltaSigma": 0.024103859610191236,
+      "vVal": 0.00438951610669089,
+      "wVal": 0.999975159805264
+     },
+     {
+      "deltaMu": 0.0026012245875064186,
+      "deltaSigma": 0.024103859610191236,
+      "vVal": 0.00438951610669089,
+      "wVal": 0.999975159805264
+     },
+     {
+      "deltaMu": 0.0026012245875064186,
+      "deltaSigma": 0.024103859610191236,
+      "vVal": 0.00438951610669089,
+      "wVal": 0.999975159805264
+     },
+     {
+      "deltaMu": 0.0026012245875064186,
+      "deltaSigma": 0.024103859610191236,
+      "vVal": 0.00438951610669089,
+      "wVal": 0.999975159805264
+     },
+     {
+      "deltaMu": 0.0026012245875064186,
+      "deltaSigma": 0.024103859610191236,
+      "vVal": 0.00438951610669089,
+      "wVal": 0.999975159805264
+     },
+     {
+      "deltaMu": 0.0026012245875064186,
+      "deltaSigma": 0.024103859610191236,
+      "vVal": 0.00438951610669089,
+      "wVal": 0.999975159805264
+     },
+     {
+      "deltaMu": 0.0026012245875064186,
+      "deltaSigma": 0.024103859610191236,
+      "vVal": 0.00438951610669089,
+      "wVal": 0.999975159805264
+     },
+     {
+      "deltaMu": 0.0026012245875064186,
+      "deltaSigma": 0.024103859610191236,
+      "vVal": 0.00438951610669089,
+      "wVal": 0.999975159805264
+     },
+     {
+      "deltaMu": 0.0026012245875064186,
+      "deltaSigma": 0.024103859610191236,
+      "vVal": 0.00438951610669089,
+      "wVal": 0.999975159805264
+     },
+     {
+      "deltaMu": 0.0026012245875064186,
+      "deltaSigma": 0.024103859610191236,
+      "vVal": 0.00438951610669089,
+      "wVal": 0.999975159805264
+     },
+     {
+      "deltaMu": 0.0026012245875064186,
+      "deltaSigma": 0.024103859610191236,
+      "vVal": 0.00438951610669089,
+      "wVal": 0.999975159805264
+     },
+     {
+      "deltaMu": 0.0026012245875064186,
+      "deltaSigma": 0.024103859610191236,
+      "vVal": 0.00438951610669089,
+      "wVal": 0.999975159805264
+     },
+     {
+      "deltaMu": 0.0026012245875064186,
+      "deltaSigma": 0.024103859610191236,
+      "vVal": 0.00438951610669089,
+      "wVal": 0.999975159805264
+     },
+     {
+      "deltaMu": 0.0026012245875064186,
+      "deltaSigma": 0.024103859610191236,
+      "vVal": 0.00438951610669089,
+      "wVal": 0.999975159805264
+     },
+     {
+      "deltaMu": 0.0026012245875064186,
+      "deltaSigma": 0.024103859610191236,
+      "vVal": 0.00438951610669089,
+      "wVal": 0.999975159805264
+     },
+     {
+      "deltaMu": 0.0026012245875064186,
+      "deltaSigma": 0.024103859610191236,
+      "vVal": 0.00438951610669089,
+      "wVal": 0.999975159805264
+     },
+     {
+      "deltaMu": 0.0026012245875064186,
+      "deltaSigma": 0.024103859610191236,
+      "vVal": 0.00438951610669089,
+      "wVal": 0.999975159805264
+     },
+     {
+      "deltaMu": 0.0026012245875064186,
+      "deltaSigma": 0.024103859610191236,
+      "vVal": 0.00438951610669089,
+      "wVal": 0.999975159805264
+     },
+     {
+      "deltaMu": 0.0026012245875064186,
+      "deltaSigma": 0.024103859610191236,
+      "vVal": 0.00438951610669089,
+      "wVal": 0.999975159805264
+     },
+     {
+      "deltaMu": 0.0026012245875064186,
+      "deltaSigma": 0.024103859610191236,
+      "vVal": 0.00438951610669089,
+      "wVal": 0.999975159805264
+     },
+     {
+      "deltaMu": 0.0026012245875064186,
+      "deltaSigma": 0.024103859610191236,
+      "vVal": 0.00438951610669089,
+      "wVal": 0.999975159805264
+     },
+     {
+      "deltaMu": 0.0026012245875064186,
+      "deltaSigma": 0.024103859610191236,
+      "vVal": 0.00438951610669089,
+      "wVal": 0.999975159805264
+     },
+     {
+      "deltaMu": 0.0026012245875064186,
+      "deltaSigma": 0.024103859610191236,
+      "vVal": 0.00438951610669089,
+      "wVal": 0.999975159805264
+     },
+     {
+      "deltaMu": 0.0026012245875064186,
+      "deltaSigma": 0.024103859610191236,
+      "vVal": 0.00438951610669089,
+      "wVal": 0.999975159805264
+     },
+     {
+      "deltaMu": 0.0026012245875064186,
+      "deltaSigma": 0.024103859610191236,
+      "vVal": 0.00438951610669089,
+      "wVal": 0.999975159805264
+     },
+     {
+      "deltaMu": 0.0026012245875064186,
+      "deltaSigma": 0.024103859610191236,
+      "vVal": 0.00438951610669089,
+      "wVal": 0.999975159805264
+     },
+     {
+      "deltaMu": 0.0026012245875064186,
+      "deltaSigma": 0.024103859610191236,
+      "vVal": 0.00438951610669089,
+      "wVal": 0.999975159805264
+     }
+    ],
+    "debug": {
+     "teamMu1": 990.4666666666664,
+     "teamMu2": 990.2,
+     "teamSigmaSq1": 1652.0833333333333,
+     "teamSigmaSq2": 2038.394444444444,
+     "c": 60.74930269375754,
+     "effectiveN1": 39,
+     "effectiveN2": 38.2,
+     "nTotal": 77.2,
+     "epsilon": 0.45884789408961735,
+     "tRaw": 0.004389625145338705,
+     "vVal": -0.00438951610669085,
+     "wVal": 0.9999751598052548
+    }
+   }
+  },
+  {
+   "name": "large gap favorite wins",
+   "input": {
+    "team1": [
+     {
+      "mu": 45,
+      "sigma": 3,
+      "participationRatio": 1
+     }
+    ],
+    "team2": [
+     {
+      "mu": 5,
+      "sigma": 3,
+      "participationRatio": 1
+     }
+    ],
+    "outcome": "team1win"
+   },
+   "expected": {
+    "team1Updates": [
+     {
+      "deltaMu": 1.3444391194459468e-7,
+      "deltaSigma": -0.010398492505540702,
+      "vVal": 1.0846646463769553e-7,
+      "wVal": 5.964252598409624e-7
+     }
+    ],
+    "team2Updates": [
+     {
+      "deltaMu": -1.3444391194459468e-7,
+      "deltaSigma": -0.010398492505540702,
+      "vVal": 1.0846646463769553e-7,
+      "wVal": 5.964252598409624e-7
+     }
+    ],
+    "debug": {
+     "teamMu1": 45,
+     "teamMu2": 5,
+     "teamSigmaSq1": 26.361111111111114,
+     "teamSigmaSq2": 26.361111111111114,
+     "c": 7.261006970263988,
+     "effectiveN1": 1,
+     "effectiveN2": 1,
+     "nTotal": 2,
+     "epsilon": 0.07385418169014642,
+     "tRaw": 5.5088777856586635,
+     "vVal": 1.0846646463769553e-7,
+     "wVal": 5.964252598409624e-7
+    }
+   }
+  },
+  {
+   "name": "large gap upset",
+   "input": {
+    "team1": [
+     {
+      "mu": 45,
+      "sigma": 3,
+      "participationRatio": 1
+     }
+    ],
+    "team2": [
+     {
+      "mu": 5,
+      "sigma": 3,
+      "participationRatio": 1
+     }
+    ],
+    "outcome": "team2win"
+   },
+   "expected": {
+    "team1Updates": [
+     {
+      "deltaMu": -7.035033457225273,
+      "deltaSigma": 0.22576208035137446,
+      "vVal": 5.675714107661452,
+      "wVal": 0.8891856398897803
+     }
+    ],
+    "team2Updates": [
+     {
+      "deltaMu": 7.035033457225273,
+      "deltaSigma": 0.22576208035137446,
+      "vVal": 5.675714107661452,
+      "wVal": 0.8891856398897803
+     }
+    ],
+    "debug": {
+     "teamMu1": 45,
+     "teamMu2": 5,
+     "teamSigmaSq1": 26.361111111111114,
+     "teamSigmaSq2": 26.361111111111114,
+     "c": 7.261006970263988,
+     "effectiveN1": 1,
+     "effectiveN2": 1,
+     "nTotal": 2,
+     "epsilon": 0.07385418169014642,
+     "tRaw": 5.5088777856586635,
+     "vVal": 5.675714107661452,
+     "wVal": 0.8891856398897803
+    }
+   }
+  },
+  {
+   "name": "boundary ratios 0.15",
+   "input": {
+    "team1": [
+     {
+      "mu": 25,
+      "sigma": 8.333,
+      "participationRatio": 0.15
+     },
+     {
+      "mu": 25,
+      "sigma": 8.333,
+      "participationRatio": 0.15
+     }
+    ],
+    "team2": [
+     {
+      "mu": 25,
+      "sigma": 8.333,
+      "participationRatio": 1
+     },
+     {
+      "mu": 25,
+      "sigma": 8.333,
+      "participationRatio": 1
+     }
+    ],
+    "outcome": "team1win"
+   },
+   "expected": {
+    "team1Updates": [
+     {
+      "deltaMu": 16.19566443713174,
+      "deltaSigma": 1.4730926689672597,
+      "vVal": 3.2954883989118855,
+      "wVal": 0.9292319052001161
+     },
+     {
+      "deltaMu": 16.19566443713174,
+      "deltaSigma": 1.4730926689672597,
+      "vVal": 3.2954883989118855,
+      "wVal": 0.9292319052001161
+     }
+    ],
+    "team2Updates": [
+     {
+      "deltaMu": -16.19566443713174,
+      "deltaSigma": 1.4730926689672597,
+      "vVal": 3.2954883989118855,
+      "wVal": 0.9292319052001161
+     },
+     {
+      "deltaMu": -16.19566443713174,
+      "deltaSigma": 1.4730926689672597,
+      "vVal": 3.2954883989118855,
+      "wVal": 0.9292319052001161
+     }
+    ],
+    "debug": {
+     "teamMu1": 7.5,
+     "teamMu2": 50,
+     "teamSigmaSq1": 26.040000033333335,
+     "teamSigmaSq2": 173.60000022222223,
+     "c": 14.129401977987447,
+     "effectiveN1": 0.3,
+     "effectiveN2": 2,
+     "nTotal": 2.3,
+     "epsilon": 0.07919978646492257,
+     "tRaw": -3.007912158363944,
+     "vVal": 3.2954883989118855,
+     "wVal": 0.9292319052001161
+    }
+   }
+  },
+  {
+   "name": "9v9 formula teams",
+   "input": {
+    "team1": [
+     {
+      "mu": 18,
+      "sigma": 8.333,
+      "participationRatio": 1
+     },
+     {
+      "mu": 19.5,
+      "sigma": 7.833,
+      "participationRatio": 1
+     },
+     {
+      "mu": 21,
+      "sigma": 7.333,
+      "participationRatio": 1
+     },
+     {
+      "mu": 22.5,
+      "sigma": 6.833,
+      "participationRatio": 1
+     },
+     {
+      "mu": 24,
+      "sigma": 6.333,
+      "participationRatio": 1
+     },
+     {
+      "mu": 25.5,
+      "sigma": 5.833,
+      "participationRatio": 1
+     },
+     {
+      "mu": 27,
+      "sigma": 5.333,
+      "participationRatio": 1
+     },
+     {
+      "mu": 28.5,
+      "sigma": 4.833,
+      "participationRatio": 1
+     },
+     {
+      "mu": 30,
+      "sigma": 4.333,
+      "participationRatio": 1
+     }
+    ],
+    "team2": [
+     {
+      "mu": 32,
+      "sigma": 1,
+      "participationRatio": 1
+     },
+     {
+      "mu": 30.5,
+      "sigma": 1.7,
+      "participationRatio": 1
+     },
+     {
+      "mu": 29,
+      "sigma": 2.4,
+      "participationRatio": 1
+     },
+     {
+      "mu": 27.5,
+      "sigma": 3.0999999999999996,
+      "participationRatio": 1
+     },
+     {
+      "mu": 26,
+      "sigma": 3.8,
+      "participationRatio": 1
+     },
+     {
+      "mu": 24.5,
+      "sigma": 4.5,
+      "participationRatio": 1
+     },
+     {
+      "mu": 23,
+      "sigma": 5.199999999999999,
+      "participationRatio": 1
+     },
+     {
+      "mu": 21.5,
+      "sigma": 5.8999999999999995,
+      "participationRatio": 1
+     },
+     {
+      "mu": 20,
+      "sigma": 6.6,
+      "participationRatio": 1
+     }
+    ],
+    "outcome": "team2win"
+   },
+   "expected": {
+    "team1Updates": [
+     {
+      "deltaMu": -1.082739592092414,
+      "deltaSigma": 0.16278059303467174,
+      "vVal": 0.45401854780914797,
+      "wVal": 0.48334663931405963
+     },
+     {
+      "deltaMu": -0.9567038180626343,
+      "deltaSigma": 0.1341554695752034,
+      "vVal": 0.45401854780914797,
+      "wVal": 0.48334663931405963
+     },
+     {
+      "deltaMu": -0.8384643927913459,
+      "deltaSigma": 0.1089484989819045,
+      "vVal": 0.45401854780914797,
+      "wVal": 0.48334663931405963
+     },
+     {
+      "deltaMu": -0.7280213162785496,
+      "deltaSigma": 0.08692014507882373,
+      "vVal": 0.45401854780914797,
+      "wVal": 0.48334663931405963
+     },
+     {
+      "deltaMu": -0.6253745885242452,
+      "deltaSigma": 0.06783111157336563,
+      "vVal": 0.45401854780914797,
+      "wVal": 0.48334663931405963
+     },
+     {
+      "deltaMu": -0.5305242095284327,
+      "deltaSigma": 0.0514411750701802,
+      "vVal": 0.45401854780914797,
+      "wVal": 0.48334663931405963
+     },
+     {
+      "deltaMu": -0.44347017929111215,
+      "deltaSigma": 0.03750748540751747,
+      "vVal": 0.45401854780914797,
+      "wVal": 0.48334663931405963
+     },
+     {
+      "deltaMu": -0.3642124978122834,
+      "deltaSigma": 0.025781942862185048,
+      "vVal": 0.45401854780914797,
+      "wVal": 0.48334663931405963
+     },
+     {
+      "deltaMu": -0.29275116509194665,
+      "deltaSigma": 0.016006903992541233,
+      "vVal": 0.45401854780914797,
+      "wVal": 0.48334663931405963
+     }
+    ],
+    "team2Updates": [
+     {
+      "deltaMu": 0.015592697516983807,
+      "deltaSigma": -0.030499828281480124,
+      "vVal": 0.45401854780914797,
+      "wVal": 0.48334663931405963
+     },
+     {
+      "deltaMu": 0.0450628958240832,
+      "deltaSigma": -0.01689791051125744,
+      "vVal": 0.45401854780914797,
+      "wVal": 0.48334663931405963
+     },
+     {
+      "deltaMu": 0.08981393769782674,
+      "deltaSigma": -0.009063162404534975,
+      "vVal": 0.45401854780914797,
+      "wVal": 0.48334663931405963
+     },
+     {
+      "deltaMu": 0.14984582313821435,
+      "deltaSigma": -0.0015882554786936787,
+      "vVal": 0.45401854780914797,
+      "wVal": 0.48334663931405963
+     },
+     {
+      "deltaMu": 0.22515855214524616,
+      "deltaSigma": 0.007424940628310672,
+      "vVal": 0.45401854780914797,
+      "wVal": 0.48334663931405963
+     },
+     {
+      "deltaMu": 0.3157521247189221,
+      "deltaSigma": 0.019071327877318467,
+      "vVal": 0.45401854780914797,
+      "wVal": 0.48334663931405963
+     },
+     {
+      "deltaMu": 0.42162654085924206,
+      "deltaSigma": 0.03418332577966421,
+      "vVal": 0.45401854780914797,
+      "wVal": 0.48334663931405963
+     },
+     {
+      "deltaMu": 0.5427818005662063,
+      "deltaSigma": 0.05348954424330721,
+      "vVal": 0.45401854780914797,
+      "wVal": 0.48334663931405963
+     },
+     {
+      "deltaMu": 0.6792179038398145,
+      "deltaSigma": 0.07767350725011646,
+      "vVal": 0.45401854780914797,
+      "wVal": 0.48334663931405963
+     }
+    ],
+    "debug": {
+     "teamMu1": 216,
+     "teamMu2": 234,
+     "teamSigmaSq1": 532.2120010000001,
+     "teamSigmaSq2": 315.61,
+     "c": 29.117383141347027,
+     "effectiveN1": 9,
+     "effectiveN2": 9,
+     "nTotal": 18,
+     "epsilon": 0.22156254507043924,
+     "tRaw": -0.618187421329075,
+     "vVal": 0.45401854780914797,
+     "wVal": 0.48334663931405963
+    }
+   }
+  },
+  {
+   "name": "2v2 uneven draw",
+   "input": {
+    "team1": [
+     {
+      "mu": 40,
+      "sigma": 2,
+      "participationRatio": 1
+     },
+     {
+      "mu": 35,
+      "sigma": 3,
+      "participationRatio": 1
+     }
+    ],
+    "team2": [
+     {
+      "mu": 15,
+      "sigma": 7,
+      "participationRatio": 1
+     },
+     {
+      "mu": 18,
+      "sigma": 6,
+      "participationRatio": 1
+     }
+    ],
+    "outcome": "draw"
+   },
+   "expected": {
+    "team1Updates": [
+     {
+      "deltaMu": -1.003268139469039,
+      "deltaSigma": 0.008272441388547769,
+      "vVal": -3.2455806151384707,
+      "wVal": 0.9996572758845073
+     },
+     {
+      "deltaMu": -2.257353313805338,
+      "deltaSigma": 0.0710200998649797,
+      "vVal": -3.2455806151384707,
+      "wVal": 0.9996572758845073
+     }
+    ],
+    "team2Updates": [
+     {
+      "deltaMu": 12.290034708495728,
+      "deltaSigma": 1.1069252442732642,
+      "vVal": 3.2455806151384707,
+      "wVal": 0.9996572758845073
+     },
+     {
+      "deltaMu": 9.029413255221352,
+      "deltaSigma": 0.6778508019485914,
+      "vVal": 3.2455806151384707,
+      "wVal": 0.9996572758845073
+     }
+    ],
+    "debug": {
+     "teamMu1": 75,
+     "teamMu2": 33,
+     "teamSigmaSq1": 47.72222222222223,
+     "teamSigmaSq2": 119.72222222222223,
+     "c": 12.940032629187781,
+     "effectiveN1": 2,
+     "effectiveN2": 2,
+     "nTotal": 4,
+     "epsilon": 0.10444558538417177,
+     "tRaw": 3.245741429218966,
+     "vVal": -3.2455806151384707,
+     "wVal": 0.9996572758845073
+    }
+   }
+  },
+  {
+   "name": "1v5",
+   "input": {
+    "team1": [
+     {
+      "mu": 38,
+      "sigma": 1.2,
+      "participationRatio": 1
+     }
+    ],
+    "team2": [
+     {
+      "mu": 20,
+      "sigma": 6,
+      "participationRatio": 1
+     },
+     {
+      "mu": 21,
+      "sigma": 6,
+      "participationRatio": 1
+     },
+     {
+      "mu": 22,
+      "sigma": 6,
+      "participationRatio": 1
+     },
+     {
+      "mu": 23,
+      "sigma": 6,
+      "participationRatio": 1
+     },
+     {
+      "mu": 24,
+      "sigma": 6,
+      "participationRatio": 1
+     }
+    ],
+    "outcome": "team1win"
+   },
+   "expected": {
+    "team1Updates": [
+     {
+      "deltaMu": 0.38160976759979914,
+      "deltaSigma": -0.022968044976638957,
+      "vVal": 4.4785884987690485,
+      "wVal": 0.9433671069481842
+     }
+    ],
+    "team2Updates": [
+     {
+      "deltaMu": -9.540244189994977,
+      "deltaSigma": 0.3624673485434293,
+      "vVal": 4.4785884987690485,
+      "wVal": 0.9433671069481842
+     },
+     {
+      "deltaMu": -9.540244189994977,
+      "deltaSigma": 0.3624673485434293,
+      "vVal": 4.4785884987690485,
+      "wVal": 0.9433671069481842
+     },
+     {
+      "deltaMu": -9.540244189994977,
+      "deltaSigma": 0.3624673485434293,
+      "vVal": 4.4785884987690485,
+      "wVal": 0.9433671069481842
+     },
+     {
+      "deltaMu": -9.540244189994977,
+      "deltaSigma": 0.3624673485434293,
+      "vVal": 4.4785884987690485,
+      "wVal": 0.9433671069481842
+     },
+     {
+      "deltaMu": -9.540244189994977,
+      "deltaSigma": 0.3624673485434293,
+      "vVal": 4.4785884987690485,
+      "wVal": 0.9433671069481842
+     }
+    ],
+    "debug": {
+     "teamMu1": 38,
+     "teamMu2": 110,
+     "teamSigmaSq1": 18.801111111111116,
+     "teamSigmaSq2": 266.80555555555554,
+     "c": 16.899901380382865,
+     "effectiveN1": 1,
+     "effectiveN2": 5,
+     "nTotal": 6,
+     "epsilon": 0.12791919503875665,
+     "tRaw": -4.260379890948739,
+     "vVal": 4.4785884987690485,
+     "wVal": 0.9433671069481842
+    }
+   }
+  },
+  {
+   "name": "tight sigmas win",
+   "input": {
+    "team1": [
+     {
+      "mu": 25,
+      "sigma": 1,
+      "participationRatio": 1
+     },
+     {
+      "mu": 25,
+      "sigma": 1,
+      "participationRatio": 1
+     },
+     {
+      "mu": 25,
+      "sigma": 1,
+      "participationRatio": 1
+     },
+     {
+      "mu": 25,
+      "sigma": 1,
+      "participationRatio": 1
+     }
+    ],
+    "team2": [
+     {
+      "mu": 25,
+      "sigma": 1,
+      "participationRatio": 1
+     },
+     {
+      "mu": 25,
+      "sigma": 1,
+      "participationRatio": 1
+     },
+     {
+      "mu": 25,
+      "sigma": 1,
+      "participationRatio": 1
+     },
+     {
+      "mu": 25,
+      "sigma": 1,
+      "participationRatio": 1
+     }
+    ],
+    "outcome": "team1win"
+   },
+   "expected": {
+    "team1Updates": [
+     {
+      "deltaMu": 0.06647480255583303,
+      "deltaSigma": -0.028663184080297555,
+      "vVal": 0.8056594933851462,
+      "wVal": 0.6392683349900603
+     },
+     {
+      "deltaMu": 0.06647480255583303,
+      "deltaSigma": -0.028663184080297555,
+      "vVal": 0.8056594933851462,
+      "wVal": 0.6392683349900603
+     },
+     {
+      "deltaMu": 0.06647480255583303,
+      "deltaSigma": -0.028663184080297555,
+      "vVal": 0.8056594933851462,
+      "wVal": 0.6392683349900603
+     },
+     {
+      "deltaMu": 0.06647480255583303,
+      "deltaSigma": -0.028663184080297555,
+      "vVal": 0.8056594933851462,
+      "wVal": 0.6392683349900603
+     }
+    ],
+    "team2Updates": [
+     {
+      "deltaMu": -0.06647480255583303,
+      "deltaSigma": -0.028663184080297555,
+      "vVal": 0.8056594933851462,
+      "wVal": 0.6392683349900603
+     },
+     {
+      "deltaMu": -0.06647480255583303,
+      "deltaSigma": -0.028663184080297555,
+      "vVal": 0.8056594933851462,
+      "wVal": 0.6392683349900603
+     },
+     {
+      "deltaMu": -0.06647480255583303,
+      "deltaSigma": -0.028663184080297555,
+      "vVal": 0.8056594933851462,
+      "wVal": 0.6392683349900603
+     },
+     {
+      "deltaMu": -0.06647480255583303,
+      "deltaSigma": -0.028663184080297555,
+      "vVal": 0.8056594933851462,
+      "wVal": 0.6392683349900603
+     }
+    ],
+    "debug": {
+     "teamMu1": 100,
+     "teamMu2": 100,
+     "teamSigmaSq1": 73.44444444444446,
+     "teamSigmaSq2": 73.44444444444446,
+     "c": 12.119772641798562,
+     "effectiveN1": 4,
+     "effectiveN2": 4,
+     "nTotal": 8,
+     "epsilon": 0.14770836338029283,
+     "tRaw": 0,
+     "vVal": 0.8056594933851462,
+     "wVal": 0.6392683349900603
+    }
+   }
+  },
+  {
+   "name": "10v10 lcg",
+   "input": {
+    "team1": [
+     {
+      "mu": 30.86515824776143,
+      "sigma": 1.7305051404982805,
+      "participationRatio": 0.1986127413343638
+     },
+     {
+      "mu": 35.55037737125531,
+      "sigma": 5.5602474473416805,
+      "participationRatio": 0.81627570806304
+     },
+     {
+      "mu": 23.186637945473194,
+      "sigma": 7.328860787674785,
+      "participationRatio": 0.5103094913298264
+     },
+     {
+      "mu": 27.88400786696002,
+      "sigma": 4.573810882866383,
+      "participationRatio": 0.3570118632516823
+     },
+     {
+      "mu": 17.847180594690144,
+      "sigma": 4.596377545967698,
+      "participationRatio": 0.6518448519520461
+     },
+     {
+      "mu": 18.924232583958656,
+      "sigma": 7.253027457743883,
+      "participationRatio": 0.24749977273168042
+     },
+     {
+      "mu": 27.995199197903275,
+      "sigma": 7.440514435991645,
+      "participationRatio": 0.7535119823878631
+     },
+     {
+      "mu": 23.522656520362943,
+      "sigma": 5.013759016990662,
+      "participationRatio": 0.42798189240274953
+     },
+     {
+      "mu": 20.945039889775217,
+      "sigma": 5.727884607389569,
+      "participationRatio": 0.41718250871635976
+     },
+     {
+      "mu": 19.387489727232605,
+      "sigma": 2.745402943342924,
+      "participationRatio": 0.49242373924935234
+     }
+    ],
+    "team2": [
+     {
+      "mu": 26.772887241095304,
+      "sigma": 7.7578728925436735,
+      "participationRatio": 0.2312817855970934
+     },
+     {
+      "mu": 24.641015722882003,
+      "sigma": 6.840845160186291,
+      "participationRatio": 0.2752478047623299
+     },
+     {
+      "mu": 27.74869861546904,
+      "sigma": 8.405320743098855,
+      "participationRatio": 0.7767103554680943
+     },
+     {
+      "mu": 10.179763764608651,
+      "sigma": 2.729953173547983,
+      "participationRatio": 0.8613165223156102
+     },
+     {
+      "mu": 18.292888281866908,
+      "sigma": 2.353176986798644,
+      "participationRatio": 0.7144525720505044
+     },
+     {
+      "mu": 33.58176974346861,
+      "sigma": 1.1304763406515121,
+      "participationRatio": 0.7364433412323705
+     },
+     {
+      "mu": 25.996091361157596,
+      "sigma": 0.7813253421336412,
+      "participationRatio": 0.46382624558173113
+     },
+     {
+      "mu": 12.897107342723757,
+      "sigma": 7.081783052533865,
+      "participationRatio": 0.1844316634000279
+     },
+     {
+      "mu": 26.418072059750557,
+      "sigma": 2.760612128302455,
+      "participationRatio": 0.9247119328239932
+     },
+     {
+      "mu": 18.140292975585908,
+      "sigma": 5.365927018225193,
+      "participationRatio": 0.47497147641843185
+     }
+    ],
+    "outcome": "team2win"
+   },
+   "expected": {
+    "team1Updates": [
+     {
+      "deltaMu": -0.08864628619238284,
+      "deltaSigma": -0.01477961781716175,
+      "vVal": 0.6370809919204591,
+      "wVal": 0.5748179789862976
+     },
+     {
+      "deltaMu": -0.9151725748326355,
+      "deltaSigma": 0.10198019620224663,
+      "vVal": 0.6370809919204591,
+      "wVal": 0.5748179789862976
+     },
+     {
+      "deltaMu": -1.5899655074750876,
+      "deltaSigma": 0.24405839918061467,
+      "vVal": 0.6370809919204591,
+      "wVal": 0.5748179789862976
+     },
+     {
+      "deltaMu": -0.6192573433435803,
+      "deltaSigma": 0.05284400395048472,
+      "vVal": 0.6370809919204591,
+      "wVal": 0.5748179789862976
+     },
+     {
+      "deltaMu": -0.6253831087823667,
+      "deltaSigma": 0.05376992221568333,
+      "vVal": 0.6370809919204591,
+      "wVal": 0.5748179789862976
+     },
+     {
+      "deltaMu": -1.5572322934168725,
+      "deltaSigma": 0.23629522545552284,
+      "vVal": 0.6370809919204591,
+      "wVal": 0.5748179789862976
+     },
+     {
+      "deltaMu": -1.6387801148692356,
+      "deltaSigma": 0.2557900960402657,
+      "vVal": 0.6370809919204591,
+      "wVal": 0.5748179789862976
+     },
+     {
+      "deltaMu": -0.744117760531485,
+      "deltaSigma": 0.0724956256557876,
+      "vVal": 0.6370809919204591,
+      "wVal": 0.5748179789862976
+     },
+     {
+      "deltaMu": -0.9711879352227346,
+      "deltaSigma": 0.11225079554323791,
+      "vVal": 0.6370809919204591,
+      "wVal": 0.5748179789862976
+     },
+     {
+      "deltaMu": -0.22311406464889677,
+      "deltaSigma": 0.0014575402234249246,
+      "vVal": 0.6370809919204591,
+      "wVal": 0.5748179789862976
+     }
+    ],
+    "team2Updates": [
+     {
+      "deltaMu": 1.7815584592937737,
+      "deltaSigma": 0.29114852968392313,
+      "vVal": 0.6370809919204591,
+      "wVal": 0.5748179789862976
+     },
+     {
+      "deltaMu": 1.3852695219163171,
+      "deltaSigma": 0.19690718138327945,
+      "vVal": 0.6370809919204591,
+      "wVal": 0.5748179789862976
+     },
+     {
+      "deltaMu": 2.091333717393587,
+      "deltaSigma": 0.37303083970759765,
+      "vVal": 0.6370809919204591,
+      "wVal": 0.5748179789862976
+     },
+     {
+      "deltaMu": 0.2206099792153069,
+      "deltaSigma": 0.0011774378644635597,
+      "vVal": 0.6370809919204591,
+      "wVal": 0.5748179789862976
+     },
+     {
+      "deltaMu": 0.16391697970461086,
+      "deltaSigma": -0.005188745705282383,
+      "vVal": 0.6370809919204591,
+      "wVal": 0.5748179789862976
+     },
+     {
+      "deltaMu": 0.037830119521912224,
+      "deltaSigma": -0.026437627945073094,
+      "vVal": 0.6370809919204591,
+      "wVal": 0.5748179789862976
+     },
+     {
+      "deltaMu": 0.0180708499529521,
+      "deltaSigma": -0.03873978007787693,
+      "vVal": 0.6370809919204591,
+      "wVal": 0.5748179789862976
+     },
+     {
+      "deltaMu": 1.4845676567918074,
+      "deltaSigma": 0.21936281672064428,
+      "vVal": 0.6370809919204591,
+      "wVal": 0.5748179789862976
+     },
+     {
+      "deltaMu": 0.225592959443576,
+      "deltaSigma": 0.0017349868752005726,
+      "vVal": 0.6370809919204591,
+      "wVal": 0.5748179789862976
+     },
+     {
+      "deltaMu": 0.8523231438594753,
+      "deltaSigma": 0.09081293688528813,
+      "vVal": 0.6370809919204591,
+      "wVal": 0.5748179789862976
+     }
+    ],
+    "debug": {
+     "teamMu1": 122.70049579660919,
+     "teamMu2": 128.57717136750625,
+     "teamSigmaSq1": 241.96817610998175,
+     "teamSigmaSq2": 221.22246803547176,
+     "c": 21.52186432782842,
+     "effectiveN1": 4.872654551418964,
+     "effectiveN2": 5.643393699650187,
+     "nTotal": 10.51604825106915,
+     "epsilon": 0.16935045886089456,
+     "tRaw": -0.27305606435304697,
+     "vVal": 0.6370809919204591,
+     "wVal": 0.5748179789862976
+    }
+   }
+  }
+ ]
+}
