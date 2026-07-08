@@ -18,7 +18,8 @@ import {
   fromMuSigma,
   toMuSigma,
   combineMessages,
-  teamFactorMessages
+  teamFactorMessages,
+  quitFactorMessage
 } from './elo-trueskill2-factors.js';
 
 /**
@@ -69,6 +70,17 @@ export function computeRoundUpdate(team1, team2, outcome, perPlayerMeta, paramet
 
   const tau = parameters.tau ?? 0;
 
+  // Opposing-team AVERAGE performance statistics for the quit and kill/death
+  // factors. teamMu is a ratio-weighted SUM, so the average divides by
+  // effectiveN once; the variance of the average divides by N TWICE
+  // (amendment A1 — Var[mean] = Var[sum]/N²).
+  const safeN1 = Math.max(tfm.effectiveN1, 1e-9);
+  const safeN2 = Math.max(tfm.effectiveN2, 1e-9);
+  const team1OtherMu = tfm.teamMu2 / safeN2;
+  const team2OtherMu = tfm.teamMu1 / safeN1;
+  const team1OtherVar = tfm.teamSigmaSq2 / (safeN2 * safeN2);
+  const team2OtherVar = tfm.teamSigmaSq1 / (safeN1 * safeN1);
+
   // Experience offset (eq. 8): biased random walk on skill after each match,
   // win or lose. Index = matches played before this round, clamped to the table.
   const experienceShift = (player) => {
@@ -79,10 +91,22 @@ export function computeRoundUpdate(team1, team2, outcome, perPlayerMeta, paramet
     return offsets[idx] ?? 0;
   };
 
-  const buildUpdate = (player, teamMessage) => {
+  // Collect all factor messages for one player (parallel EP pass, A6).
+  const buildMessages = (player, teamMessage, opponentMu, opponentVar) => {
+    const messages = [teamMessage];
+    const meta = perPlayerMeta[player.eosID];
+    if (!meta) return messages;
+
+    if (meta.quit) {
+      messages.push(quitFactorMessage(player, opponentMu, opponentVar, parameters));
+    }
+    return messages;
+  };
+
+  const buildUpdate = (player, teamMessage, opponentMu, opponentVar) => {
     const prior = fromMuSigma(player.mu, player.sigma);
-    const posterior = combineMessages(prior, [teamMessage]);
-    const { mu, sigma } = toMuSigma(posterior);
+    const messages = buildMessages(player, teamMessage, opponentMu, opponentVar);
+    const { mu, sigma } = toMuSigma(combineMessages(prior, messages));
 
     // Dynamics noise applied ONCE, after all factor messages (amendment A2).
     const newSigma = Math.sqrt(sigma * sigma + tau * tau);
@@ -96,8 +120,8 @@ export function computeRoundUpdate(team1, team2, outcome, perPlayerMeta, paramet
     };
   };
 
-  const team1Updates = team1.map((p, i) => buildUpdate(p, tfm.team1Messages[i]));
-  const team2Updates = team2.map((p, i) => buildUpdate(p, tfm.team2Messages[i]));
+  const team1Updates = team1.map((p, i) => buildUpdate(p, tfm.team1Messages[i], team1OtherMu, team1OtherVar));
+  const team2Updates = team2.map((p, i) => buildUpdate(p, tfm.team2Messages[i], team2OtherMu, team2OtherVar));
 
   return {
     team1Updates,

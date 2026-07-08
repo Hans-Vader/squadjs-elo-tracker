@@ -205,3 +205,51 @@ export function teamFactorMessages(team1, team2, outcome, parameters, teamMeta =
     tRaw
   };
 }
+
+/**
+ * Quit-penalty factor message (paper Section 9, online form).
+ *
+ * A quit is one extra one-sided observation of the "mini-game"
+ *     D = perf_i − perf_o_i < m_q,  D ~ N(mu_i − muOther, σ² + β² + varOther + v_q)
+ * i.e. the standard TrueSkill LOSS update with margin m_q — exactly the
+ * paper's own online interpretation (p.18: "a mini-game between the player
+ * and a rescaled version of the enemy team").
+ *
+ * This is the deterministic-quit limit (p_u→0, p_r→1) of the paper's
+ * eq.-13 noisy-OR — the STRONGEST possible penalty. The paper itself notes
+ * the full model already over-penalizes slightly; calibrate quitParams.mQ
+ * before enabling the plugin's quit gate.
+ *
+ * @param {Object} player       { mu, sigma }
+ * @param {number} muOther      mean of the AVERAGE opposing performance
+ * @param {number} varOther     variance of that AVERAGE (teamSigmaSq/N², A1)
+ * @param {Object} parameters   uses beta, quitParams.{mQ, vQ}
+ * @returns {{deltaPrecision, deltaPrecisionMean}}
+ */
+export function quitFactorMessage(player, muOther, varOther, parameters) {
+  const sigmaSq = player.sigma * player.sigma;
+  const beta = parameters.beta;
+  const { mQ, vQ } = parameters.quitParams ?? {};
+  if (!Number.isFinite(mQ) || !(vQ > 0)) return EMPTY_MESSAGE;
+
+  const totalVar = sigmaSq + beta * beta + varOther + vQ;
+  const c = Math.sqrt(totalVar);
+  if (!(c > 0)) return EMPTY_MESSAGE;
+
+  // Observe D < mQ ⇒ standard loss update from the "winner" (mini-game
+  // opponent) perspective: t_win = −t with t = (E[D] − mQ)/c.
+  const t = (player.mu - muOther - mQ) / c;
+  const vWin = gauss.v(-t, 0); // ≥ 0; tail-guarded
+  const wVal = gauss.w(-t, 0); // ∈ (0, 1); tail-guarded
+
+  const newMu = player.mu - (sigmaSq / c) * vWin;
+  const safeFactor = Math.min((sigmaSq / (c * c)) * wVal, 1 - 1e-10);
+  const newSigmaSq = sigmaSq * (1 - safeFactor);
+
+  const priorPrec = 1 / sigmaSq;
+  const postPrec = 1 / newSigmaSq;
+  return {
+    deltaPrecision: postPrec - priorPrec,
+    deltaPrecisionMean: newMu * postPrec - player.mu * priorPrec
+  };
+}
