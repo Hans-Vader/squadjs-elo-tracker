@@ -73,8 +73,12 @@ export function combineMessages(prior, messages) {
  * @param {Array<{mu, sigma, participationRatio?}>} team2
  * @param {'team1win'|'team2win'|'draw'} outcome
  * @param {Object} parameters   needs beta, drawProbability
- * @param {Object} teamMeta     optional { team1: { meanShift }, team2: { meanShift } }
- *                              additive shifts on teamMu (squad-offset factor, eq. 7)
+ * @param {Object} teamMeta     optional { team1: { perPlayerShifts }, team2: { perPlayerShifts } }
+ *                              per-player additive performance-mean shifts
+ *                              (squad-offset factor, eq. 7), index-aligned with
+ *                              the team arrays. Summed here with the SAME
+ *                              ratio-weighting and 50-slot scaling as teamMu so
+ *                              the two can never drift apart.
  *
  * @returns {{
  *   empty?: boolean, degenerate?: boolean,
@@ -104,8 +108,19 @@ export function teamFactorMessages(team1, team2, outcome, parameters, teamMeta =
   effectiveN1 *= scale1;
   effectiveN2 *= scale2;
 
-  const meanShift1 = teamMeta.team1?.meanShift ?? 0;
-  const meanShift2 = teamMeta.team2?.meanShift ?? 0;
+  // Squad-offset mean shift (eq. 7): each player's performance mean is
+  // skill + squadOffset(size); the team mean therefore shifts by the
+  // ratio-weighted, slot-scaled sum of the per-player offsets.
+  const sumShifts = (team, shifts, scale) => {
+    if (!shifts) return 0;
+    let total = 0;
+    for (let i = 0; i < team.length; i++) {
+      total += (shifts[i] ?? 0) * getRatio(team[i]);
+    }
+    return total * scale;
+  };
+  const meanShift1 = sumShifts(team1, teamMeta.team1?.perPlayerShifts, scale1);
+  const meanShift2 = sumShifts(team2, teamMeta.team2?.perPlayerShifts, scale2);
 
   const teamMu1 = team1.reduce((sum, p) => sum + p.mu * getRatio(p), 0) * scale1 + meanShift1;
   const teamMu2 = team2.reduce((sum, p) => sum + p.mu * getRatio(p), 0) * scale2 + meanShift2;

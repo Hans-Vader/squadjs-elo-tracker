@@ -36,7 +36,24 @@ import {
  *   then newMu = mu + deltaMu and newSigma = sigma − deltaSigma.
  */
 export function computeRoundUpdate(team1, team2, outcome, perPlayerMeta, parameters) {
-  const teamMeta = {}; // squad-offset mean shifts arrive with the eq.-7 factor
+  // Squad-offset factor (eq. 7): per-player performance-mean shifts by squad
+  // size. squadOffsets[0] (solo) is pinned to 0, so the default squadSize=1
+  // yields no shift. Ratio-weighting and slot-scaling happen inside
+  // teamFactorMessages, next to the teamMu computation they must mirror.
+  const squadShifts = (team) => {
+    const offsets = parameters.squadOffsets;
+    if (!offsets || offsets.length === 0) return null;
+    return team.map((p) => {
+      const size = perPlayerMeta[p.eosID]?.squadSize ?? 1;
+      const idx = Math.min(Math.max(size - 1, 0), offsets.length - 1);
+      return offsets[idx] ?? 0;
+    });
+  };
+
+  const teamMeta = {
+    team1: { perPlayerShifts: squadShifts(team1) },
+    team2: { perPlayerShifts: squadShifts(team2) }
+  };
   const tfm = teamFactorMessages(team1, team2, outcome, parameters, teamMeta);
 
   // Legacy parity for degenerate inputs
