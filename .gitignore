@@ -1,5 +1,13 @@
 *.jsonl
 *.json
 
+# Test fixtures are tracked despite the blanket JSON ignore
+!testing/fixtures/*.json
+!testing/fixtures/*.jsonl
+
+# IDE / reference material
+/.idea/
+/trueskill2.pdf
+
 # Docker / local env
 /.env
