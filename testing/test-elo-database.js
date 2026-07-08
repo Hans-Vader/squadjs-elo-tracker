@@ -59,7 +59,7 @@ export default async function runDatabaseTests(runTest) {
 
   await runTest('Retry Logic: SQLITE_BUSY', async () => {
     let attempts = 0;
-    
+
     // Mock function that throws SQLITE_BUSY once, then succeeds
     const flakyFunc = async () => {
       attempts++;
@@ -72,5 +72,76 @@ export default async function runDatabaseTests(runTest) {
     const result = await db._executeWithRetry(flakyFunc);
     if (result !== 'success') throw new Error('Retry logic failed to return result');
     if (attempts !== 2) throw new Error(`Expected 2 attempts (1 fail + 1 retry), got ${attempts}`);
+  });
+
+  await runTest('RoundPlayers: TrueSkill2 columns persist', async () => {
+    const row = {
+      matchId: 'm1',
+      roundStartTime: 1000,
+      roundHistoryId: 1,
+      eosID: 'ts2_p1',
+      steamID: 's1',
+      name: 'P1',
+      teamID: 1,
+      participationRatio: 0.9,
+      squadID: 4,
+      squadSize: 6,
+      kills: 12,
+      deaths: 3,
+      quit: false,
+      experienceBefore: 27,
+      muBefore: 25,
+      sigmaBefore: 8.33,
+      rawDeltaMu: 0.5,
+      rawDeltaSigma: 0.1,
+      scaledDeltaMu: 0.45,
+      scaledDeltaSigma: 0.09,
+      muAfter: 25.45,
+      sigmaAfter: 8.24
+    };
+    await db.insertRoundPlayers(1, Date.now(), [row]);
+
+    const read = await db.models.RoundPlayers.findOne({ where: { eosID: 'ts2_p1' } });
+    if (!read) throw new Error('row not inserted');
+    if (read.squadID !== 4) throw new Error(`squadID column missing or wrong: ${read.squadID}`);
+    if (read.squadSize !== 6) throw new Error(`squadSize column missing: ${read.squadSize}`);
+    if (read.kills !== 12) throw new Error(`kills column missing: ${read.kills}`);
+    if (read.deaths !== 3) throw new Error(`deaths column missing: ${read.deaths}`);
+    if (read.quit !== false && read.quit !== 0) throw new Error(`quit column missing: ${read.quit}`);
+    if (read.experienceBefore !== 27) throw new Error(`experienceBefore column missing: ${read.experienceBefore}`);
+  });
+
+  await runTest('RoundPlayers: additive migration adds columns to a legacy table', async () => {
+    // Build a second in-memory DB whose Elo_RoundPlayers table pre-exists in
+    // the LEGACY shape (no TS2 columns), then run initDB and verify the
+    // migration added them.
+    const legacySequelize = new Sequelize({ dialect: 'sqlite', storage: ':memory:', logging: false });
+    await legacySequelize.query(`CREATE TABLE Elo_RoundPlayers (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      matchId VARCHAR(20),
+      roundStartTime BIGINT,
+      roundHistoryId INTEGER NOT NULL,
+      eosID VARCHAR(255) NOT NULL,
+      steamID VARCHAR(255),
+      name VARCHAR(255),
+      teamID INTEGER NOT NULL,
+      participationRatio FLOAT NOT NULL,
+      muBefore FLOAT NOT NULL,
+      sigmaBefore FLOAT NOT NULL,
+      rawDeltaMu FLOAT NOT NULL,
+      rawDeltaSigma FLOAT NOT NULL,
+      scaledDeltaMu FLOAT NOT NULL,
+      scaledDeltaSigma FLOAT NOT NULL,
+      muAfter FLOAT NOT NULL,
+      sigmaAfter FLOAT NOT NULL
+    );`);
+
+    const legacyDb = new EloDatabase({}, {}, { sqlite: legacySequelize });
+    await legacyDb.initDB();
+
+    const desc = await legacySequelize.getQueryInterface().describeTable('Elo_RoundPlayers');
+    for (const col of ['squadID', 'squadSize', 'kills', 'deaths', 'quit', 'experienceBefore']) {
+      if (!desc[col]) throw new Error(`migration did not add column ${col}`);
+    }
   });
 }
