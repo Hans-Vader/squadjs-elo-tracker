@@ -273,7 +273,20 @@ export default class EloTracker extends BasePlugin {
     this.listeners.onServerInfoUpdated = this.onServerInfoUpdated.bind(this);
     this.listeners.onTeamBalancerScramble = this.onTeamBalancerScramble.bind(this);
     EloDiscord.registerDiscordCommands(this);
-    this.listeners.onDiscordMessage = this.onDiscordMessage.bind(this);
+    // Error boundary: the 'message' listener is a fire-and-forget async handler
+    // with ~15 unguarded `await message.reply()`/DB sites. A single rejection
+    // (bot missing Send-Messages perm, transient Discord 5xx, or the trigger
+    // message being deleted mid-handler) would otherwise escape as an unhandled
+    // rejection and, under Node's default policy, crash the whole SquadJS
+    // process. Wrap once here so no rejection from the handler can propagate.
+    const boundDiscordMessage = this.onDiscordMessage.bind(this);
+    this.listeners.onDiscordMessage = async (message) => {
+      try {
+        await boundDiscordMessage(message);
+      } catch (err) {
+        Logger.verbose('EloTracker', 1, `[onDiscordMessage] Unhandled error (suppressed to protect the process): ${err.stack || err.message}`);
+      }
+    };
     EloCommands.register(this);
     this.listeners.onEloCommand = this.onEloCommand.bind(this);
     this.listeners.onEloAdminCommand = this.onEloAdminCommand.bind(this);
@@ -865,13 +878,37 @@ export default class EloTracker extends BasePlugin {
     // old EloCalculator.computeTeamUpdate path (golden-tested).
     const quitters = this._detectQuittersAt(roundEndTime);
     const perPlayerMeta = this._buildPerPlayerMeta(participants, eligible, quitters, roundEndTime);
-    const { team1Updates, team2Updates } = computeRoundUpdate(
-      team1Eligible.map(p => ({ eosID: p.eosID, ...getRating(p.eosID), participationRatio: p.participationRatio })),
-      team2Eligible.map(p => ({ eosID: p.eosID, ...getRating(p.eosID), participationRatio: p.participationRatio })),
-      outcome,
-      perPlayerMeta,
-      this.params
-    );
+
+    // Error boundary: the TrueSkill2 factor library throws by design on
+    // unstable messages (posterior precision <= 0, sigma <= 0). An uncaught
+    // throw in this async event listener escapes to the process and, under
+    // Node's default unhandled-rejection policy, can take down the whole
+    // SquadJS instance. Contain it here: skip the round, leave ratings
+    // untouched (nothing is mutated before this point), post a skip embed.
+    // ponytail: guards the throw path only — NaN inputs (e.g. drawProbability>=1)
+    // don't throw; a finite-check on mu/sigma before persistence is a separate fix.
+    let team1Updates, team2Updates;
+    try {
+      ({ team1Updates, team2Updates } = computeRoundUpdate(
+        team1Eligible.map(p => ({ eosID: p.eosID, ...getRating(p.eosID), participationRatio: p.participationRatio })),
+        team2Eligible.map(p => ({ eosID: p.eosID, ...getRating(p.eosID), participationRatio: p.participationRatio })),
+        outcome,
+        perPlayerMeta,
+        this.params
+      ));
+    } catch (err) {
+      Logger.verbose('EloTracker', 1, `[onRoundEnded] Rating engine failed — round skipped, ratings unchanged: ${err.stack || err.message}`);
+      const targetReportChannel = this.discordReportChannel || this.discordAdminChannel;
+      if (targetReportChannel) {
+        try {
+          const embed = EloDiscord.buildRoundSkippedEmbed(`Rating engine error: ${err.message}`, playerCount, layerName);
+          await EloDiscord.sendDiscordMessage(targetReportChannel, { embeds: [embed] });
+        } catch (e2) {
+          Logger.verbose('EloTracker', 1, `[onRoundEnded] Also failed to post skip embed: ${e2.message}`);
+        }
+      }
+      return;
+    }
 
     const team1RatingsBefore = team1Eligible.map(p => getRating(p.eosID));
     const team2RatingsBefore = team2Eligible.map(p => getRating(p.eosID));

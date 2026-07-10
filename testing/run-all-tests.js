@@ -41,6 +41,7 @@ export async function runAll() {
 
   const suites = [
     { name: 'EloCalculator', file: './test-elo-calculator.js' },
+    { name: 'EloClanGrouping', file: './test-clan-grouping.js' },
     { name: 'EloParameters', file: './test-elo-parameters.js' },
     { name: 'EloTrueSkill2Factors', file: './test-elo-trueskill2-factors.js' },
     { name: 'EloTrueSkill2Engine', file: './test-elo-trueskill2-engine.js' },
@@ -52,6 +53,9 @@ export async function runAll() {
   ];
 
   const results = {};
+  let totalPassed = 0;
+  let totalFailed = 0;
+  let suiteErrors = 0; // load failures / missing default export — these must also fail CI
 
   for (const suite of suites) {
     results[suite.name] = [];
@@ -70,6 +74,8 @@ export async function runAll() {
       const capturingRunTest = async (name, fn) => {
         const result = await runTest(name, fn);
         suiteRunData.tests.push({ name, passed: result.passed, error: result.error });
+        if (result.passed) totalPassed++;
+        else totalFailed++;
         return result.passed;
       };
 
@@ -82,11 +88,13 @@ export async function runAll() {
         if (module.default && typeof module.default === 'function') {
           await module.default(capturingRunTest);
         } else {
-          console.log(`${COLORS.RED}  Skipped: No default export function found in ${suite.file}${COLORS.RESET}`);
+          suiteErrors++;
+          console.log(`${COLORS.RED}  FAILED: No default export function found in ${suite.file}${COLORS.RESET}`);
         }
       } catch (err) {
+        suiteErrors++;
         if (err.code === 'ERR_MODULE_NOT_FOUND') {
-          console.log(`${COLORS.RED}  Skipped: Module missing (${suite.file}): ${err.message}${COLORS.RESET}`);
+          console.log(`${COLORS.RED}  FAILED: Module missing (${suite.file}): ${err.message}${COLORS.RESET}`);
         } else {
           console.error(`${COLORS.RED}  Error loading suite:${COLORS.RESET}`, err);
         }
@@ -103,6 +111,14 @@ export async function runAll() {
     console.log(`${COLORS.GREEN}Results saved to test-results.json${COLORS.RESET}`);
   } catch (err) {
     console.error(`${COLORS.RED}Failed to save results:${COLORS.RESET}`, err);
+  }
+
+  const color = totalFailed || suiteErrors ? COLORS.RED : COLORS.GREEN;
+  console.log(
+    `${color}Summary: ${totalPassed} passed, ${totalFailed} failed, ${suiteErrors} suite error(s)${COLORS.RESET}`
+  );
+  if (totalFailed || suiteErrors) {
+    process.exitCode = 1; // fail the process so CI can gate on it
   }
 }
 
