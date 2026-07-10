@@ -4,8 +4,10 @@
  * ╚═══════════════════════════════════════════════════════════════╝
  *
  * Central TrueSkill2 parameter object. Every tunable parameter of the
- * rating engine lives here. See trueskill2.pdf (Minka, Cleven & Zaykov
- * 2018) for definitions; equation numbers below refer to that paper.
+ * rating engine lives here. Definitions and equation numbers below refer
+ * to Minka, Cleven & Zaykov 2018, "TrueSkill 2" (Microsoft Research
+ * MSR-TR-2018-8):
+ * https://www.microsoft.com/en-us/research/publication/trueskill-2-improved-bayesian-skill-rating-system/
  *
  * Scale: 0–50 (existing repo convention, β = 25/6 ≈ 4.167 vs the paper's
  * β = 1). Any β-relative magnitude taken from the paper must be multiplied

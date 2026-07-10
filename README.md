@@ -53,7 +53,7 @@ A dynamic uncertainty floor (τ/tau) prevents sigma from reaching zero, ensuring
 
 ### TrueSkill2 Extensions
 
-The rating engine implements **TrueSkill2** (Minka, Cleven & Zaykov 2018 — see `trueskill2.pdf`). Four additional Bayesian factors extend the classic win/loss update:
+The rating engine implements **TrueSkill2** (Minka, Cleven & Zaykov 2018, Microsoft Research MSR-TR-2018-8 — [paper](https://www.microsoft.com/en-us/research/publication/trueskill-2-improved-bayesian-skill-rating-system/)). Four additional Bayesian factors extend the classic win/loss update:
 
 | Factor | Paper ref | What it does |
 |---|---|---|
