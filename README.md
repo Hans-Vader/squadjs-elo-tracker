@@ -166,6 +166,7 @@ squad-server/
 │   └── elo-tracker.js
 └── utils/
     ├── elo-calculator.js
+    ├── elo-clan-grouping.js
     ├── elo-commands.js
     ├── elo-database.js
     ├── elo-discord.js
