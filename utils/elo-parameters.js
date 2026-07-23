@@ -50,7 +50,6 @@ function buildDefaults() {
     // Clan-tag co-membership per team (NOT in-game squads). NEUTRAL by default.
     // partyOffsets[0] (solo) is pinned to 0 for identifiability.
     partyOffsets: offsetsArray,
-    squadOffsets: offsetsArray, // legacy alias for backwards compatibility during transition
 
     // --- Experience offset (eq. 8). Index = matches played, capped at 199. ---
     // NEUTRAL by default. Applied to mu after every match, win or lose.
@@ -113,11 +112,6 @@ export const DEFAULT_PARAMETERS = deepFreeze(buildDefaults());
  */
 export function loadParameters(overrides = {}) {
   const params = buildDefaults();
-  // Handle legacy squadOffsets as alias for partyOffsets
-  if ('squadOffsets' in overrides && !('partyOffsets' in overrides)) {
-    overrides = { ...overrides, partyOffsets: overrides.squadOffsets };
-    delete overrides.squadOffsets;
-  }
   for (const [key, value] of Object.entries(overrides)) {
     if (value === undefined || value === null) continue;
     if (!(key in params)) continue; // unknown keys are ignored, not smuggled in
@@ -138,6 +132,5 @@ export function loadParameters(overrides = {}) {
     }
   }
   params.partyOffsets[0] = 0; // paper fixes offset(1) = 0
-  params.squadOffsets = params.partyOffsets; // ensure both names reference the same array
   return deepFreeze(params);
 }

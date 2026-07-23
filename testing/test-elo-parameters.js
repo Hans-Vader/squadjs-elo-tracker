@@ -52,4 +52,10 @@ export default async function runParameterTests(runTest) {
     if (p.tau !== DEFAULT_PARAMETERS.tau) throw new Error(`undefined override must be ignored`);
     if (p.drawProbability !== DEFAULT_PARAMETERS.drawProbability) throw new Error(`null override must be ignored`);
   });
+
+  await runTest('Clean rename: squadOffsets is not an alias — key absent and ignored as override', async () => {
+    const p = loadParameters({ squadOffsets: [0, 0, 0, 9.0] });
+    if ('squadOffsets' in p) throw new Error('params must not expose a squadOffsets key');
+    if (p.partyOffsets[3] !== 0) throw new Error('legacy squadOffsets override must be ignored, not mapped');
+  });
 }
