@@ -9,10 +9,10 @@
  * Stage 1: classic BETA × TAU sweep (unchanged objective/diagnostics).
  * Stage 2: TrueSkill2 sweep of the three parameters worth tuning at this
  *          data scale — quitParams.mQ, experienceOffsets[0] (new-player
- *          drift, decaying to 0 by 50 games) and squadOffsets[3]
+ *          drift, decaying to 0 by 50 games) and partyOffsets[3]
  *          (4-stack boost) — run at the stage-1 winner's BETA/TAU.
  *          Each dimension only activates when the log actually contains
- *          the corresponding observations (quit flags / squad sizes);
+ *          the corresponding observations (quit flags / clan parties);
  *          zero is always in the grid so "feature off" can win.
  *          Kill/death weights are deliberately NOT swept — they need far
  *          more data than a single server produces; leave them neutral.
@@ -25,6 +25,7 @@ import fs from 'fs';
 import EloCalculator from '../utils/elo-calculator.js';
 import { computeRoundUpdate } from '../utils/elo-trueskill2-engine.js';
 import { loadParameters } from '../utils/elo-parameters.js';
+import { computePartySizes } from '../utils/elo-clan-grouping.js';
 
 const jsonlPath = process.argv[2];
 const dbPath    = process.argv[3];
@@ -33,6 +34,14 @@ if (!jsonlPath || !dbPath) {
   console.error('Usage: node elo-calibrate.js <matchlog.jsonl> <db-backup.json>');
   process.exit(1);
 }
+
+const PARTY_OPTIONS = {
+  caseSensitive: process.argv.includes('--party-case-sensitive'),
+  maxEditDistance: (() => {
+    const a = process.argv.find(x => x.startsWith('--party-max-edit-distance='));
+    return a ? Number(a.split('=')[1]) : 1;
+  })()
+};
 
 // --- Constants ---
 const RATED_MIN_GAMES    = 5;
@@ -83,20 +92,25 @@ rl.on('line', (line) => {
   const team2 = players.filter(p => p.teamID === 2);
   if (!team1.length || !team2.length) return;
 
-  matches.push({ matchId, endedAt, outcome, players, team1, team2 });
+  const parsedMatch = { matchId, endedAt, outcome, players, team1, team2 };
+  parsedMatch.partyByEos = computePartySizes(
+    players.map(pl => ({ eosID: pl.eosID, name: pl.name, teamID: pl.teamID })),
+    PARTY_OPTIONS
+  );
+  matches.push(parsedMatch);
 });
 
 // --- Win probability ---
-// `parameters` is a loadParameters() object; squadOffsets shift the predicted
+// `parameters` is a loadParameters() object; partyOffsets shift the predicted
 // team means exactly as in the engine (paper eq. 7 applies to matchmaking
-// predictions too). `perPlayerMeta` supplies squad sizes when available.
+// predictions too). `perPlayerMeta` supplies party sizes when available.
 function winProbability(team1, team2, parameters, perPlayerMeta = {}) {
   const BETA = parameters.beta;
   const getRatio = (p) => p.participationRatio ?? 1.0;
 
-  const squadShiftOf = (p) => {
-    const offsets = parameters.squadOffsets;
-    const size = perPlayerMeta[p.eosID]?.squadSize ?? 1;
+  const partyShiftOf = (p) => {
+    const offsets = parameters.partyOffsets;
+    const size = perPlayerMeta[p.eosID]?.partySize ?? 1;
     const idx = Math.min(Math.max(size - 1, 0), offsets.length - 1);
     return offsets[idx] ?? 0;
   };
@@ -110,8 +124,8 @@ function winProbability(team1, team2, parameters, perPlayerMeta = {}) {
   effectiveN1 *= scale1;
   effectiveN2 *= scale2;
 
-  const teamMu1      = team1.reduce((s, p) => s + (p.mu + squadShiftOf(p)) * getRatio(p), 0) * scale1;
-  const teamMu2      = team2.reduce((s, p) => s + (p.mu + squadShiftOf(p)) * getRatio(p), 0) * scale2;
+  const teamMu1      = team1.reduce((s, p) => s + (p.mu + partyShiftOf(p)) * getRatio(p), 0) * scale1;
+  const teamMu2      = team2.reduce((s, p) => s + (p.mu + partyShiftOf(p)) * getRatio(p), 0) * scale2;
 
   const teamSigmaSq1 = team1.reduce((s, p) => s + (p.sigma * p.sigma + BETA * BETA) * getRatio(p), 0) * scale1;
   const teamSigmaSq2 = team2.reduce((s, p) => s + (p.sigma * p.sigma + BETA * BETA) * getRatio(p), 0) * scale2;
@@ -153,8 +167,8 @@ function replayMatches(matches, overrides = {}, options = {}) {
     const perPlayerMeta = {};
     for (const p of match.players) {
       perPlayerMeta[p.eosID] = {
-        squadID: p.squadID ?? 0,
-        squadSize: p.squadSize ?? 1,
+        clanTag: (match.partyByEos?.get(p.eosID) ?? {}).clanTag ?? null,
+        partySize: (match.partyByEos?.get(p.eosID) ?? {}).partySize ?? 1,
         experience: getRating(p.eosID).roundsPlayed,
         kills: p.kills,
         deaths: p.deaths,
@@ -278,14 +292,14 @@ function gridSearch(matches) {
 // --- Stage 2: TrueSkill2 sweep at fixed BETA/TAU ---
 function ts2GridSearch(matches, BETA, TAU) {
   const hasQuit  = matches.some(m => m.players.some(p => p.quit === true));
-  const hasSquad = matches.some(m => m.players.some(p => (p.squadSize ?? 1) > 1));
+  const hasParty = matches.some(m => [...(m.partyByEos?.values() ?? [])].some(v => v.partySize > 1));
 
   const mQs = hasQuit  ? [0, -1.0, -2.083, -3.0] : [0];   // 0 ⇒ quit factor off (applyQuit=false)
   const e0s = [0, 0.1, 0.2, 0.4];                          // new-player drift, decays to 0 by game 50
-  const s4s = hasSquad ? [0, 0.5, 0.83, 1.2] : [0];        // 4-stack boost
+  const s4s = hasParty ? [0, 0.5, 0.83, 1.2] : [0];        // 4-stack party boost
 
   if (!hasQuit)  console.log('  (no quit flags in log — skipping mQ sweep)');
-  if (!hasSquad) console.log('  (no squad sizes in log — skipping squadOffset sweep)');
+  if (!hasParty) console.log('  (no clan parties in log — skipping partyOffset sweep)');
 
   const results = [];
   const total = mQs.length * e0s.length * s4s.length;
@@ -297,13 +311,13 @@ function ts2GridSearch(matches, BETA, TAU) {
         n++;
         process.stdout.write(`\rTS2 sweep mQ=${mQ} e0=${e0} s4=${s4} (${n}/${total})...`);
         const experienceOffsets = Array.from({ length: 200 }, (_, i) => (i < 50 ? e0 * (1 - i / 50) : 0));
-        // Linear squad-offset curve anchored at the swept 4-stack value
-        const squadOffsets = Array.from({ length: 10 }, (_, i) => (i < 1 ? 0 : (s4 / 3) * i));
+        // Linear party-offset curve anchored at the swept 4-stack value
+        const partyOffsets = Array.from({ length: 10 }, (_, i) => (i < 1 ? 0 : (s4 / 3) * i));
         const overrides = {
           beta: BETA,
           tau: TAU,
           experienceOffsets,
-          squadOffsets,
+          partyOffsets,
           quitParams: { mQ: mQ === 0 ? -2.083 : mQ, vQ: 1.0 }
         };
         const { totalLoss, adjustedLoss, calibPenalty, games } =
@@ -406,7 +420,7 @@ rl.on('close', () => {
   console.log(`\n=== STAGE 2: TRUESKILL2 SWEEP (BETA=${bestBeta}, TAU=${bestTau}) ===\n`);
   const ts2Results = ts2GridSearch(matches, bestBeta, bestTau);
 
-  console.log(`\n${'Rank'.padEnd(6)} ${'mQ'.padEnd(8)} ${'exp0'.padEnd(8)} ${'squad4'.padEnd(8)} ${'RawLoss'.padEnd(12)} ${'AdjLoss'.padEnd(12)} ${'Acc%'}`);
+  console.log(`\n${'Rank'.padEnd(6)} ${'mQ'.padEnd(8)} ${'exp0'.padEnd(8)} ${'party4'.padEnd(8)} ${'RawLoss'.padEnd(12)} ${'AdjLoss'.padEnd(12)} ${'Acc%'}`);
   console.log('─'.repeat(64));
   for (let i = 0; i < Math.min(10, ts2Results.length); i++) {
     const r = ts2Results[i];
@@ -427,7 +441,7 @@ rl.on('close', () => {
         experienceOffsets: Array.from({ length: 50 }, (_, i) => parseFloat((best.e0 * (1 - i / 50)).toFixed(4)))
       }),
       ...(best.s4 !== 0 && {
-        squadOffsets: Array.from({ length: 10 }, (_, i) => parseFloat((i < 1 ? 0 : (best.s4 / 3) * i).toFixed(4)))
+        partyOffsets: Array.from({ length: 10 }, (_, i) => parseFloat((i < 1 ? 0 : (best.s4 / 3) * i).toFixed(4)))
       }),
       ...(best.mQ !== 0 && { quitParams: { mQ: best.mQ, vQ: 1.0 } })
     },
