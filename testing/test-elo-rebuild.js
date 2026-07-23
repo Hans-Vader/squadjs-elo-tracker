@@ -88,4 +88,81 @@ export default async function runRebuildTests(runTest) {
       throw new Error('backup-less rebuild must still work with null steamIDs');
     }
   });
+
+  await runTest('Rebuild: replay prefers logged partySize/clanTag over name-based recompute', async () => {
+    const fs = await import('fs');
+    const os = await import('os');
+
+    // Non-zero size-2 party boost so the effect is observable in mu; size-1
+    // stays pinned to 0 by loadParameters (identifiability).
+    const partyOverrides = { partyOffsets: [0, 3.0] };
+
+    // Record 1 simulates a POST-feature log entry: the live plugin logged
+    // p1's exact partySize/clanTag (2/'ACE') because p1 was eligible, even
+    // though p1's other party member was sub-threshold/ineligible and so
+    // never appears in the log at all. Recomputing from names alone would
+    // see only ONE '[ACE]'-tagged name on team1 — below extractClanGroups'
+    // minSize:2 — and collapse to a solo (partySize 1). `record1NoField` is
+    // the same match with the fields stripped (pre-feature shape), which
+    // MUST recompute to the same solo partySize 1 for p1.
+    const record1WithField = {
+      matchId: 'm1', endedAt: 1700000000000, outcome: 'team1win', roundDuration: 1500000,
+      players: [
+        { eosID: 'p1', name: '[ACE] Alpha', teamID: 1, participationRatio: 1, partySize: 2, clanTag: 'ACE' },
+        { eosID: 'p2', name: 'Solo2', teamID: 2, participationRatio: 1 }
+      ]
+    };
+    const record1NoField = {
+      matchId: 'm1', endedAt: 1700000000000, outcome: 'team1win', roundDuration: 1500000,
+      players: [
+        { eosID: 'p1', name: '[ACE] Alpha', teamID: 1, participationRatio: 1 },
+        { eosID: 'p2', name: 'Solo2', teamID: 2, participationRatio: 1 }
+      ]
+    };
+    // Record 2 is identical in both files: a pre-feature record (no
+    // partySize/clanTag at all) with plain, tag-less names — must fall back
+    // to the name-based recompute (partySize 1) regardless of record 1.
+    const record2 = {
+      matchId: 'm2', endedAt: 1700003600000, outcome: 'team1win', roundDuration: 1500000,
+      players: [
+        { eosID: 'p3', name: 'Charlie', teamID: 1, participationRatio: 1 },
+        { eosID: 'p4', name: 'Delta', teamID: 2, participationRatio: 1 }
+      ]
+    };
+
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'elo-rebuild-party-'));
+    const pathWithField = path.join(tmpDir, 'with-field.jsonl');
+    const pathNoField   = path.join(tmpDir, 'no-field.jsonl');
+    fs.writeFileSync(pathWithField, `${JSON.stringify(record1WithField)}\n${JSON.stringify(record2)}\n`, 'utf8');
+    fs.writeFileSync(pathNoField,   `${JSON.stringify(record1NoField)}\n${JSON.stringify(record2)}\n`, 'utf8');
+
+    try {
+      const withField = await rebuildFromLog(pathWithField, null, partyOverrides);
+      const noField    = await rebuildFromLog(pathNoField,   null, partyOverrides);
+
+      const muWithField = withField.players.get('p1').mu;
+      const muNoField   = noField.players.get('p1').mu;
+
+      if (Math.abs(muWithField - muNoField) < 0.05) {
+        throw new Error(
+          `logged partySize:2 must diverge from the recomputed-from-names singleton (partySize 1): ` +
+          `withField.mu=${muWithField}, noField.mu=${muNoField}`
+        );
+      }
+
+      // p3/p4 (record 2) never carry the field in either file — both runs
+      // must recompute identically, proving the divergence above is caused
+      // by the resolution logic honouring record 1's logged field, not by
+      // some unrelated difference between the two replay runs.
+      for (const id of ['p3', 'p4']) {
+        const a = withField.players.get(id).mu;
+        const b = noField.players.get(id).mu;
+        if (Math.abs(a - b) > 1e-9) {
+          throw new Error(`pre-feature record (${id}) must replay identically regardless of record 1: ${a} vs ${b}`);
+        }
+      }
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
 }

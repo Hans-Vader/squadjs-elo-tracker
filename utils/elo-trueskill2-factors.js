@@ -75,7 +75,7 @@ export function combineMessages(prior, messages) {
  * @param {Object} parameters   needs beta, drawProbability
  * @param {Object} teamMeta     optional { team1: { perPlayerShifts }, team2: { perPlayerShifts } }
  *                              per-player additive performance-mean shifts
- *                              (squad-offset factor, eq. 7), index-aligned with
+ *                              (party-offset factor, eq. 7), index-aligned with
  *                              the team arrays. Summed here with the SAME
  *                              ratio-weighting and 50-slot scaling as teamMu so
  *                              the two can never drift apart.
@@ -108,8 +108,8 @@ export function teamFactorMessages(team1, team2, outcome, parameters, teamMeta =
   effectiveN1 *= scale1;
   effectiveN2 *= scale2;
 
-  // Squad-offset mean shift (eq. 7): each player's performance mean is
-  // skill + squadOffset(size); the team mean therefore shifts by the
+  // Party-offset mean shift (eq. 7): each player's performance mean is
+  // skill + partyOffset(size); the team mean therefore shifts by the
   // ratio-weighted, slot-scaled sum of the per-player offsets.
   const sumShifts = (team, shifts, scale) => {
     if (!shifts) return 0;

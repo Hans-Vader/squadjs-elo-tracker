@@ -170,9 +170,11 @@ function replayMatches(matches, overrides = {}, options = {}) {
     const durMin = (match.roundDuration ?? 0) / 60000;
     const perPlayerMeta = {};
     for (const p of match.players) {
+      // Prefer the exact value the live plugin logged; only recompute from
+      // names (partyByEos) when the log predates the partySize/clanTag fields.
       perPlayerMeta[p.eosID] = {
-        clanTag: (match.partyByEos?.get(p.eosID) ?? {}).clanTag ?? null,
-        partySize: (match.partyByEos?.get(p.eosID) ?? {}).partySize ?? 1,
+        clanTag: p.clanTag ?? (match.partyByEos?.get(p.eosID)?.clanTag ?? null),
+        partySize: p.partySize ?? (match.partyByEos?.get(p.eosID)?.partySize ?? 1),
         experience: getRating(p.eosID).roundsPlayed,
         kills: p.kills,
         deaths: p.deaths,
@@ -296,7 +298,7 @@ function gridSearch(matches) {
 // --- Stage 2: TrueSkill2 sweep at fixed BETA/TAU ---
 function ts2GridSearch(matches, BETA, TAU) {
   const hasQuit  = matches.some(m => m.players.some(p => p.quit === true));
-  const hasParty = matches.some(m => [...(m.partyByEos?.values() ?? [])].some(v => v.partySize > 1));
+  const hasParty = matches.some(m => m.players.some(p => (p.partySize ?? m.partyByEos?.get(p.eosID)?.partySize ?? 1) > 1));
 
   const mQs = hasQuit  ? [0, -1.0, -2.083, -3.0] : [0];   // 0 ⇒ quit factor off (applyQuit=false)
   const e0s = [0, 0.1, 0.2, 0.4];                          // new-player drift, decays to 0 by game 50

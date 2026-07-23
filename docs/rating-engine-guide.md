@@ -271,6 +271,8 @@ node tools/elo-rebuild.js <matchlog.jsonl> <backup.json> [output.json] [--apply-
 
 The tool replays every match chronologically through the engine, starting every player from the μ₀/√v₀ prior, then prints a Done/Processed/Skipped summary. Load the produced `output.json` into the live DB with:
 
+> **Party size caveat:** replaying a **post-feature** log (records carrying `partySize`/`clanTag` per player) uses that exact logged value, matching live scoring bit-for-bit. Replaying a **pre-feature** log (no `partySize` field) instead recomputes party size from the logged player names — since the log only contains eligible players, this recomputation necessarily excludes any sub-threshold/ineligible member of a live party, which can undercount a party that had a live boost.
+
 ```
 !elo restore
 ```

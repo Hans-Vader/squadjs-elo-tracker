@@ -31,9 +31,11 @@
  * Notes on TrueSkill2 replay:
  * - With neutral default parameters this reproduces the legacy replay
  *   bit-for-bit (regression-tested in testing/test-elo-rebuild.js).
- * - Party size/clan tag are RECOMPUTED per round from the logged player
- *   names (not read from any logged squadID/squadSize), so replays group
- *   consistently with the live plugin even for old logs.
+ * - Party size/clan tag PREFER the exact value logged by the live plugin
+ *   (post-feature records carry `partySize`/`clanTag` per player, already
+ *   accounting for sub-threshold/ineligible teammates). Only when those
+ *   fields are ABSENT (pre-feature logs) is party size recomputed from the
+ *   logged player names — which then sees ELIGIBLE players only.
  * - Records written before the TrueSkill2 upgrade carry no
  *   kills/deaths/quit fields — those factors are simply inert for such
  *   rounds. New records replay with full observations.
@@ -150,9 +152,11 @@ export async function rebuildFromLog(matchlogPath, backupPath = null, paramOverr
     );
     const perPlayerMeta = {};
     for (const p of match.players) {
+      // Prefer the exact value the live plugin logged; only recompute from
+      // names (partyByEos) when the log predates the partySize/clanTag fields.
       perPlayerMeta[p.eosID] = {
-        clanTag: (partyByEos.get(p.eosID) ?? {}).clanTag ?? null,
-        partySize: (partyByEos.get(p.eosID) ?? {}).partySize ?? 1,
+        clanTag: p.clanTag ?? (partyByEos.get(p.eosID)?.clanTag ?? null),
+        partySize: p.partySize ?? (partyByEos.get(p.eosID)?.partySize ?? 1),
         experience: players.get(p.eosID).roundsPlayed,
         kills: p.kills,
         deaths: p.deaths,
