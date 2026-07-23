@@ -28,6 +28,7 @@
 const SCALE = 25.0 / 6.0; // = repo β; ratio repo:paper = 4.167:1
 
 function buildDefaults() {
+  const offsetsArray = Array.from({ length: 10 }, () => 0.0);
   return {
     // --- Prior on skill (eq. 1) ---
     mu0: 25.0,
@@ -45,12 +46,11 @@ function buildDefaults() {
     // --- Draw margin ---
     drawProbability: 0.01,
 
-    // --- Squad offset (eq. 7). Index i = squad size i+1. ---
-    // NEUTRAL by default. squadOffsets[0] (solo) is pinned to 0 for
-    // identifiability (the paper fixes squadOffset(1) = 0).
-    // Note: Squad "squads" are in-game squads (max 9), not the pre-made
-    // parties of the paper — calibrate before trusting the signal.
-    squadOffsets: Array.from({ length: 10 }, () => 0.0),
+    // --- Party offset (eq. 7). Index i = party size i+1. ---
+    // Clan-tag co-membership per team (NOT in-game squads). NEUTRAL by default.
+    // partyOffsets[0] (solo) is pinned to 0 for identifiability.
+    partyOffsets: offsetsArray,
+    squadOffsets: offsetsArray, // legacy alias for backwards compatibility during transition
 
     // --- Experience offset (eq. 8). Index = matches played, capped at 199. ---
     // NEUTRAL by default. Applied to mu after every match, win or lose.
@@ -106,13 +106,18 @@ export const DEFAULT_PARAMETERS = deepFreeze(buildDefaults());
  * - Arrays are merged element-wise and keep the canonical default length.
  * - Plain objects are shallow-merged (nested defaults survive partial overrides).
  * - `undefined`/`null` overrides are ignored.
- * - squadOffsets[0] is forced back to 0 (identifiability).
+ * - partyOffsets[0] is forced back to 0 (identifiability).
  *
  * @param {Object} overrides
  * @returns {Object} deep-frozen parameter object
  */
 export function loadParameters(overrides = {}) {
   const params = buildDefaults();
+  // Handle legacy squadOffsets as alias for partyOffsets
+  if ('squadOffsets' in overrides && !('partyOffsets' in overrides)) {
+    overrides = { ...overrides, partyOffsets: overrides.squadOffsets };
+    delete overrides.squadOffsets;
+  }
   for (const [key, value] of Object.entries(overrides)) {
     if (value === undefined || value === null) continue;
     if (!(key in params)) continue; // unknown keys are ignored, not smuggled in
@@ -132,6 +137,7 @@ export function loadParameters(overrides = {}) {
       params[key] = value;
     }
   }
-  params.squadOffsets[0] = 0; // paper fixes squadOffset(1) = 0
+  params.partyOffsets[0] = 0; // paper fixes offset(1) = 0
+  params.squadOffsets = params.partyOffsets; // ensure both names reference the same array
   return deepFreeze(params);
 }
