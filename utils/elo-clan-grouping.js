@@ -42,6 +42,17 @@
  *                                // non-alphanumeric strip + uppercase.
  *     }
  *
+ *   computePartySizes(players, options) -> Map<eosID, {partySize, clanTag}>
+ *     Team-bound wrapper around extractClanGroups: groups same-tag
+ *     players who share a teamID into a "party", one entry per
+ *     eosID. Solo/no-tag players get {partySize:1, clanTag:null}.
+ *
+ *     options = {
+ *       caseSensitive: boolean    // default false
+ *       maxEditDistance: number   // default 1
+ *       ignoredTags: string[]     // default []; matching tags -> public
+ *     }
+ *
  * DETECTION STRATEGIES (priority order)
  * -------------------------------------
  *   1. Tag wrapped in a matched or mismatched bracket pair, including
@@ -207,4 +218,46 @@ export function extractClanGroups(rawPlayers, options = {}) {
   }
 
   return groups;
+}
+
+/**
+ * Party size + clan tag per player, team-bound. Single source of truth for
+ * the TrueSkill2 party (eq. 7) factor — used live by the plugin and on replay
+ * by tools/elo-rebuild.js and tools/elo-calibrate.js.
+ *
+ * @param {Array<{eosID, name, teamID}>} players  all round participants
+ * @param {Object} [options]
+ *   caseSensitive   {boolean}  default false — passed to extractClanGroups
+ *   maxEditDistance {number}   default 1     — Levenshtein merge (0 = exact)
+ *   ignoredTags     {string[]} default []    — treated as public (no clan)
+ * @returns {Map<string, {partySize:number, clanTag:string|null}>}
+ */
+export function computePartySizes(players, options = {}) {
+  const caseSensitive   = options.caseSensitive ?? false;
+  const maxEditDistance = options.maxEditDistance ?? 1;
+  const ignore = new Set((options.ignoredTags ?? []).map(normalizeTag).filter(Boolean));
+
+  const result = new Map();
+  const byTeam = new Map();
+  for (const p of players || []) {
+    if (!p?.eosID) continue;
+    result.set(p.eosID, { partySize: 1, clanTag: null }); // default solo
+    if (!p.name) continue;
+    const t = p.teamID ?? 0;
+    if (!byTeam.has(t)) byTeam.set(t, []);
+    byTeam.get(t).push(p);
+  }
+
+  for (const teamPlayers of byTeam.values()) {
+    const groups = extractClanGroups(teamPlayers, {
+      minSize: 2, caseSensitive, maxEditDistance, maxSize: Infinity
+    });
+    for (const [tag, members] of Object.entries(groups)) {
+      if (ignore.has(normalizeTag(tag))) continue; // ignored ⇒ leave members public
+      for (const eosID of members) {
+        result.set(eosID, { partySize: members.length, clanTag: tag });
+      }
+    }
+  }
+  return result;
 }

@@ -13,7 +13,8 @@ import {
   extractRawPrefix,
   normalizeTag,
   levenshteinDistance,
-  extractClanGroups
+  extractClanGroups,
+  computePartySizes
 } from '../utils/elo-clan-grouping.js';
 
 export default async function runClanGroupingTests(runTest) {
@@ -204,5 +205,62 @@ export default async function runClanGroupingTests(runTest) {
     }));
     const groups = extractClanGroups(players, { caseSensitive: false, minSize: 2, maxSize: 18, maxEditDistance: 0 });
     if (groups.BIG) throw new Error('25-member group should be filtered out by maxSize: 18');
+  });
+
+  // ─── computePartySizes ─────────────────────────────────────────────
+
+  await runTest('computePartySizes: same tag same team ⇒ party; other team separate', async () => {
+    const players = [
+      { eosID: 'a', name: '[ACE] Alpha', teamID: 1 },
+      { eosID: 'b', name: '[ACE] Bravo', teamID: 1 },
+      { eosID: 'c', name: '[ACE] Charlie', teamID: 2 }, // same tag, other team
+      { eosID: 'd', name: 'RandomGuy', teamID: 1 }
+    ];
+    const m = computePartySizes(players);
+    if (m.get('a').partySize !== 2) throw new Error(`a expected 2, got ${m.get('a').partySize}`);
+    if (m.get('a').clanTag !== 'ACE') throw new Error(`a clanTag expected ACE, got ${m.get('a').clanTag}`);
+    if (m.get('c').partySize !== 1) throw new Error(`c (lone ACE on team2) expected 1, got ${m.get('c').partySize}`);
+    if (m.get('d').partySize !== 1 || m.get('d').clanTag !== null) throw new Error('d (no clan) must be solo/null');
+  });
+
+  await runTest('computePartySizes: single tag member is not a party (minSize 2)', async () => {
+    const m = computePartySizes([{ eosID: 'a', name: '[ACE] Solo', teamID: 1 }]);
+    if (m.get('a').partySize !== 1 || m.get('a').clanTag !== null) throw new Error('lone tag ⇒ partySize 1, clanTag null');
+  });
+
+  await runTest('computePartySizes: default normalizes ⇒ homoglyph/case variants merge', async () => {
+    const players = [
+      { eosID: 'a', name: '[♣ΛCE] One', teamID: 1 },
+      { eosID: 'b', name: '[♣ΛC€] Two', teamID: 1 }
+    ];
+    const m = computePartySizes(players);
+    if (m.get('a').partySize !== 2 || m.get('b').partySize !== 2) throw new Error('homoglyph variants must merge');
+  });
+
+  await runTest('computePartySizes: caseSensitive:true separates TR/tr', async () => {
+    const players = [
+      { eosID: 'a', name: '[TR] One', teamID: 1 },
+      { eosID: 'b', name: '[tr] Two', teamID: 1 }
+    ];
+    const m = computePartySizes(players, { caseSensitive: true, maxEditDistance: 0 });
+    if (m.get('a').partySize !== 1) throw new Error('caseSensitive:true must keep TR and tr apart');
+  });
+
+  await runTest('computePartySizes: maxEditDistance 0 does not merge near tags', async () => {
+    const players = [
+      { eosID: 'a', name: 'CAV1 One', teamID: 1 },
+      { eosID: 'b', name: 'CAV2 Two', teamID: 1 }
+    ];
+    if (computePartySizes(players, { maxEditDistance: 0 }).get('a').partySize !== 1) throw new Error('editDistance 0 ⇒ no merge');
+    if (computePartySizes(players, { maxEditDistance: 1 }).get('a').partySize !== 2) throw new Error('editDistance 1 ⇒ merge');
+  });
+
+  await runTest('computePartySizes: ignoredTags ⇒ members treated as public (PART B)', async () => {
+    const players = [
+      { eosID: 'a', name: '[TR] One', teamID: 1 },
+      { eosID: 'b', name: '[TR] Two', teamID: 1 }
+    ];
+    const m = computePartySizes(players, { ignoredTags: ['TR'] });
+    if (m.get('a').partySize !== 1 || m.get('a').clanTag !== null) throw new Error('ignored tag ⇒ public');
   });
 }
