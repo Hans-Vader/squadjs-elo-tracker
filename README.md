@@ -62,7 +62,7 @@ The rating engine implements **TrueSkill2** (Minka, Cleven & Zaykov 2018, Micros
 | **Kill/death statistics** | eq. 9 | Per-minute kill and death counts become direct skill observations — good stats soften a loss, poor stats dampen a win. Zero counts use the exact censored update. |
 | **Quit penalty** | Section 9 | A detected quit is one extra "lost mini-game vs. the enemy team average" observation. |
 
-**All factors ship NEUTRAL (disabled).** Out of the box the engine reproduces the previous TrueSkill behaviour bit-for-bit (regression-tested against golden snapshots). The plugin *records* the new observations from day one — per-player `clanTag`, `partySize` (derived from clan-tag co-membership), `kills` (from `PLAYER_WOUNDED` downs), `deaths` (from `PLAYER_DIED`), `quit` and `experienceBefore` land in the match log and, with `enableDatabaseLogging`, in `Elo_RoundPlayers` (columns are added automatically by a startup migration).
+**All factors ship NEUTRAL (disabled).** Out of the box the engine reproduces the previous TrueSkill behaviour bit-for-bit (regression-tested against golden snapshots). The plugin *records* the new observations from day one — per-player `clanTag`, `partySize` (derived from clan-tag co-membership), `kills` (from `PLAYER_WOUNDED` downs), `deaths` (from `PLAYER_DIED`), `quit` and `experienceBefore` land in the match log and, with `enableDatabaseLogging`, in `Elo_RoundPlayers` (schema is created on first start — clean install assumed, no migrations).
 
 Enable factors by calibrating against your own match log (Halo-fitted paper values do not transfer to Squad):
 
