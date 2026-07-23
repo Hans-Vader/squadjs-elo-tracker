@@ -113,17 +113,17 @@ Four systematic gaps. Classic TrueSkill reaches **52 % prediction accuracy** wit
 
 The trick: the Gaussian generative model **stays**, but additional factors are built into the factor graph – each one closes one of the gaps named above.
 
-### 3.1 Squad offset (Section 6, Eq. 7)
+### 3.1 Party offset (clan tag) (Section 6, Eq. 7)
 
 The performance equation is extended:
 
 ```
-perf_i ~ N(skill_i + squadOffset(squadSize_i), β²)
+perf_i ~ N(skill_i + partyOffset(partySize_i), β²)
 ```
 
-`squadOffset` is a calibrated table per squad size, with `squadOffset(1) = 0` by definition. Mathematically it is only a **shift of the mean** of the team mean – the variance stays unchanged.
+where a "party" is a group of players sharing a **clan tag on the same team** (detected from their names, not from in-game squads). `partyOffset` is a calibrated table per party size, with `partyOffset(1) = 0` by definition. Mathematically it is only a **shift of the mean** of the team mean – the variance stays unchanged. Grouping is determined by clan-tag co-membership per team.
 
-Effect: if a squad team is the favourite, the rating gain on a win comes out **smaller**, and the rating loss on a defeat **larger**. This corrects for the well-known fact that coordinated squads achieve more than the sum of their members.
+Effect: if a party team is the favourite, the rating gain on a win comes out **smaller**, and the rating loss on a defeat **larger**. This corrects for the well-known fact that coordinated parties achieve more than the sum of their members.
 
 ### 3.2 Experience offset (Section 7, Eq. 8)
 
@@ -257,7 +257,7 @@ In this form multiplying Gaussians is **trivial**:
 In TrueSkill 1 there is **one** message: from the team comparison. In TrueSkill 2 up to six can come together:
 
 1. team comparison
-2. squad offset (modifies only the mean of the team factor)
+2. party offset (clan tag) (modifies only the mean of the team factor)
 3. experience offset (shifts μ after the update)
 4. kill observation
 5. death observation
@@ -293,7 +293,7 @@ Of the five v2 features, **four are directly applicable to Squad**:
 
 | v2 feature | Squad mapping | Status in the plan |
 |---|---|---|
-| Squad offset | in-game squads (up to 9 players) | Task 7 |
+| Party offset (clan tag) | clan-tag co-membership on the same team | Task 7 |
 | Experience offset | match count (`roundsPlayed`) | Task 8 |
 | Quit penalty | mid-round disconnect via UPDATED_PLAYER_INFORMATION delta | Task 9 |
 | Kill/death | `PLAYER_DIED` events | Task 10 |

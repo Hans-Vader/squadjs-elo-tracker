@@ -56,6 +56,8 @@ Ratings are computed **once per round, at round end.** Here is the actual per-ro
 3. **`PLAYER_WOUNDED`** → increments a kill counter for the attacker (team-kills, self-wounds, and same-team fallbacks are skipped).
 4. **`PLAYER_DIED`** → increments a death counter for the victim (suicides, team-kills, and environment deaths all count).
 
+> **Note:** A "party" in the party offset factor is not an in-game squad, but a group of players sharing a **clan tag on the same team** (detected from their names). Squad size is now the clan-tag party size.
+
 **At round end — compute and persist:**
 
 5. **`ROUND_ENDED`** → the plugin runs a series of **eligibility gates**. The round is *silently skipped* (ratings untouched, a skip embed posted) if any fail:
@@ -116,7 +118,13 @@ Two independent things gate visibility:
 
 All four are **off by default** (weights/offsets zero). Each adds an extra "message" to the per-player update when enabled. See `docs/trueskill2-explained.md` for the equations (referenced by number below).
 
-**Squad factor (eq. 7) — `squadOffsets`.** A per-squad-size performance offset. It does **not** touch an individual player's μ/σ directly; it shifts the *team mean* used in the win/loss comparison, ratio-weighted and slot-scaled the same way the team mean is. Turning it on lets the engine account for the fact that, e.g., a full 9-stack squad performs differently than the same players solo, so wins/losses are attributed more fairly. Index = squad size − 1 (solo is pinned to 0). Neutral default = no effect.
+**Party factor (eq. 7) — `partyOffsets`.** A per-party-size performance offset,
+where a "party" is players sharing a **clan tag on the same team** (detected from
+their names, not in-game squads). It shifts the *team mean* used in the win/loss
+comparison, ratio-weighted and slot-scaled the same way the team mean is. Index =
+party size − 1 (solo/no-tag/single-tag pinned to 0). Detection is tunable via the
+plugin options `partyCaseSensitive`, `partyMaxEditDistance` and `partyIgnoredTags`.
+Neutral default = no effect.
 
 **Experience factor (eq. 8) — `experienceOffsets`.** A pure additive drift to μ applied **every match, win or lose**, indexed by matches played (capped at 199). It models the "new players improve just by playing" effect as a biased random walk — a small positive offset for low experience that decays to 0 as players rack up games. Affects μ only, never σ. Turning it on gently lifts newcomers' μ during their first games regardless of results.
 
@@ -157,7 +165,7 @@ All options live in the EloTracker plugin block. Values shown are the exact defa
 
 ### (b) The `trueskill2` parameter block
 
-`trueskill2: {}` (empty) → all neutral defaults below → **engine is identical to classic TrueSkill.** Overrides are merged element-wise onto these defaults (arrays keep their canonical length; unknown keys and null/undefined are ignored; `squadOffsets[0]` is always forced to 0).
+`trueskill2: {}` (empty) → all neutral defaults below → **engine is identical to classic TrueSkill.** Overrides are merged element-wise onto these defaults (arrays keep their canonical length; unknown keys and null/undefined are ignored; `partyOffsets[0]` is always forced to 0).
 
 | Parameter | Default | Effect |
 |-----------|---------|--------|
@@ -167,7 +175,10 @@ All options live in the EloTracker plugin block. Values shown are the exact defa
 | `tau` | `0.25` | Per-match dynamics drift, applied **once per round** as `sqrt(σ² + tau²)`. |
 | `tauPerMinute` | `0` | Time-based drift. **Defined but NOT consumed by the engine** — setting it has no effect. |
 | `drawProbability` | `0.01` | Assumed draw margin; feeds the draw threshold `epsilon`. |
-| `squadOffsets` | `[0.0 × 10]` | Squad-size mean offset (eq. 7). Index = squad size − 1; index 0 (solo) pinned to 0. |
+| `partyOffsets` | `[0.0 × 10]` | Party-size mean offset (eq. 7). Index = party size − 1; index 0 (solo) pinned to 0. |
+| `partyCaseSensitive` | `false` | Whether clan-tag matching is case-sensitive. |
+| `partyMaxEditDistance` | `1` | Maximum edit distance (Levenshtein) for clan-tag matching. |
+| `partyIgnoredTags` | `[]` | List of clan tags to exclude from party detection. |
 | `experienceOffsets` | `[0.0 × 200]` | Additive μ drift by matches played (eq. 8); index = matches capped at 199. Applied every match. |
 | `killParams.wPlayer` | `0.0` | Own-skill weight for kills (eq. 9). **0 disables the kill message entirely.** |
 | `killParams.wOpponent` | `0.0` | Opponent-strength weight for kills. |
@@ -217,9 +228,9 @@ The calibrator replays your entire log from scratch for each candidate parameter
 - **Stage 2 — TrueSkill2 sweep** at the Stage-1 winner. Sweeps exactly three dimensions:
   - `quitParams.mQ` over `[0, -1.0, -2.083, -3.0]` (0 = quit off);
   - `experienceOffsets[0]` (new-player drift) over `[0, 0.1, 0.2, 0.4]`, expanded to a 50-game linear decay;
-  - the 4-stack squad boost over `[0, 0.5, 0.83, 1.2]`, expanded to a linear `squadOffsets` curve.
+  - the 4-stack party boost over `[0, 0.5, 0.83, 1.2]`, expanded to a linear `partyOffsets` curve.
   - **Kill/death weights are deliberately NOT swept.**
-  - A dimension collapses to `[0]` if the log lacks that observation (no quit flags → mQ off; no squad sizes > 1 → squad off). If your recommended config omits `quitParams`/`squadOffsets`, check whether your log actually contains those fields.
+  - A dimension collapses to `[0]` if the log lacks that observation (no quit flags → mQ off; no clan parties in log → party off). If your recommended config omits `quitParams`/`partyOffsets`, check whether your log actually contains those fields.
 
 ### Copy the result into config
 
@@ -232,7 +243,7 @@ Recommended plugin config (paste into the EloTracker options):
     "beta": ...,
     "tau": ...,
     "experienceOffsets": [ ... ],   // omitted if it calibrated to 0
-    "squadOffsets": [ ... ],        // omitted if it calibrated to 0
+    "partyOffsets": [ ... ],        // omitted if it calibrated to 0
     "quitParams": { "mQ": ..., "vQ": 1.0 }  // omitted if mQ calibrated to 0
   },
   "enableQuitPenalty": true          // added ONLY when mQ != 0
@@ -284,7 +295,7 @@ The tool replays every match chronologically through the engine, starting every 
 
 ## 9. Troubleshooting / gotchas
 
-- **"Nothing changed after I set squad/kill/experience values."** Every TrueSkill2 feature is off by default. Squad/experience/kill/death effects require calibrating and pasting values into the `trueskill2` block. `killParams.wPlayer`/`deathParams.wPlayer` of 0 makes those factors *identically zero* regardless of variance.
+- **"Nothing changed after I set party/kill/experience values."** Every TrueSkill2 feature is off by default. Party/experience/kill/death effects require calibrating and pasting values into the `trueskill2` block. `killParams.wPlayer`/`deathParams.wPlayer` of 0 makes those factors *identically zero* regardless of variance.
 - **Quit penalty isn't applying.** It's double-gated: `quitParams.mQ` has no effect unless `enableQuitPenalty: true`. Detection (recorded to DB/log) happens regardless; only the engine-facing quit flag is gated. And calibrate `quitParams` first — the default `mQ = -2.083` is a *large* penalty (~−4.7 μ per quit).
 - **False quitter flags.** SquadJS has **no reliable disconnect event** (`PLAYER_DISCONNECTED` never fires); departure is inferred from ~30s polling, so a crash is indistinguishable from a rage-quit. Keep `quitGraceSeconds` ≥ ~60s (≥ 2 poll cycles).
 - **`tauPerMinute` does nothing.** It exists in the defaults but the engine never reads it. Use `tau` for drift.
@@ -294,7 +305,7 @@ The tool replays every match chronologically through the engine, starting every 
 - **CSR multiplier is hard-coded.** `mu - 3*sigma` lives in code as the single `EloCalculator.SIGMA_MULTIPLIER` constant (in `utils/elo-calculator.js`), *referenced* — not re-literaled — by the leaderboard/rank SQL (which interpolates it) and the command/embed helpers. It is a source constant, not a config option.
 - **The DB counters are incremented, not overwritten.** wins/losses/roundsPlayed are added to (per-round 0 or 1); μ/σ are overwritten with absolute values. Rebuild/calibration writes must respect this contract or totals double-count.
 - **calibrate writes nothing to disk.** You copy its printed JSON by hand. Its second (backup) arg does **not** seed ratings — replays always start from defaults.
-- **Stage-2 dimensions collapse to `[0]`** when the log lacks quit flags or squad sizes > 1. Pre-TrueSkill2 log records lack those fields entirely.
+- **Stage-2 dimensions collapse to `[0]`** when the log lacks quit flags or clan parties > 1. Pre-TrueSkill2 log records lack those fields entirely.
 - **rebuild CLI uses neutral params only.** To rebuild with calibrated beta/tau, call `rebuildFromLog` from code. Run with `--apply-quit-penalty` **only** if the live plugin has `enableQuitPenalty` on, or the rebuilt DB diverges from live scoring.
 - **Backups are partial.** `exportPlayerStats`/`!elo backup` covers only `Elo_PlayerStats`. Losing `Elo_RoundPlayers` (the per-round observations) breaks TrueSkill2 replay even if player stats survive. For a full, restorable backup, copy the whole DB file (SQLite: include `-wal`/`-shm`).
 - **Missing TrueSkill2 columns after upgrade.** `sync()` runs without `alter`, so it never adds columns to existing tables — the six TrueSkill2 observation columns on `Elo_RoundPlayers` are added only by the additive migration, which no-ops if the table doesn't yet exist.
