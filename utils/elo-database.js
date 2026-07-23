@@ -291,12 +291,12 @@ export default class EloDatabase {
              allowNull: false
            },
            // --- TrueSkill2 observation columns (additive; see ensureTrueSkill2Columns) ---
-           squadID: {
+           partySize: {
              type: Sequelize.INTEGER,
              allowNull: true
            },
-           squadSize: {
-             type: Sequelize.INTEGER,
+           clanTag: {
+             type: Sequelize.STRING,
              allowNull: true
            },
            kills: {
@@ -378,8 +378,8 @@ export default class EloDatabase {
     if (!desc) return; // table absent — nothing to migrate
 
     const columns = {
-      squadID: { type: Sequelize.INTEGER, allowNull: true },
-      squadSize: { type: Sequelize.INTEGER, allowNull: true },
+      partySize: { type: Sequelize.INTEGER, allowNull: true },
+      clanTag: { type: Sequelize.STRING, allowNull: true },
       kills: { type: Sequelize.INTEGER, allowNull: false, defaultValue: 0 },
       deaths: { type: Sequelize.INTEGER, allowNull: false, defaultValue: 0 },
       quit: { type: Sequelize.BOOLEAN, allowNull: false, defaultValue: false },
@@ -390,6 +390,18 @@ export default class EloDatabase {
       if (!desc[name]) {
         await queryInterface.addColumn('Elo_RoundPlayers', name, spec);
         Logger.verbose('EloTracker', 1, `[DB] Migration: added column Elo_RoundPlayers.${name}`);
+      }
+    }
+
+    // Dev-stage: drop legacy in-game-squad columns (best-effort; no data to keep).
+    for (const legacy of ['squadID', 'squadSize']) {
+      if (desc[legacy]) {
+        try {
+          await queryInterface.removeColumn('Elo_RoundPlayers', legacy);
+          Logger.verbose('EloTracker', 1, `[DB] Migration: dropped legacy column Elo_RoundPlayers.${legacy}`);
+        } catch (e) {
+          Logger.verbose('EloTracker', 1, `[DB] Migration: could not drop ${legacy}: ${e.message}`);
+        }
       }
     }
   }

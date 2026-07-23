@@ -84,8 +84,8 @@ export default async function runDatabaseTests(runTest) {
       name: 'P1',
       teamID: 1,
       participationRatio: 0.9,
-      squadID: 4,
-      squadSize: 6,
+      partySize: 6,
+      clanTag: 'ACE',
       kills: 12,
       deaths: 3,
       quit: false,
@@ -103,8 +103,8 @@ export default async function runDatabaseTests(runTest) {
 
     const read = await db.models.RoundPlayers.findOne({ where: { eosID: 'ts2_p1' } });
     if (!read) throw new Error('row not inserted');
-    if (read.squadID !== 4) throw new Error(`squadID column missing or wrong: ${read.squadID}`);
-    if (read.squadSize !== 6) throw new Error(`squadSize column missing: ${read.squadSize}`);
+    if (read.partySize !== 6) throw new Error(`partySize column missing or wrong: ${read.partySize}`);
+    if (read.clanTag !== 'ACE') throw new Error(`clanTag column missing or wrong: ${read.clanTag}`);
     if (read.kills !== 12) throw new Error(`kills column missing: ${read.kills}`);
     if (read.deaths !== 3) throw new Error(`deaths column missing: ${read.deaths}`);
     if (read.quit !== false && read.quit !== 0) throw new Error(`quit column missing: ${read.quit}`);
@@ -140,7 +140,7 @@ export default async function runDatabaseTests(runTest) {
     await legacyDb.initDB();
 
     const desc = await legacySequelize.getQueryInterface().describeTable('Elo_RoundPlayers');
-    for (const col of ['squadID', 'squadSize', 'kills', 'deaths', 'quit', 'experienceBefore']) {
+    for (const col of ['partySize', 'clanTag', 'kills', 'deaths', 'quit', 'experienceBefore']) {
       if (!desc[col]) throw new Error(`migration did not add column ${col}`);
     }
   });
