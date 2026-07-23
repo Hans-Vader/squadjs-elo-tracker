@@ -290,7 +290,8 @@ export default class EloDatabase {
              type: Sequelize.FLOAT,
              allowNull: false
            },
-           // --- TrueSkill2 observation columns (additive; see ensureTrueSkill2Columns) ---
+           // --- TrueSkill2 observation columns (migrated by _ensureTrueSkill2Columns,
+           //     which also DROPS the legacy squadID/squadSize columns — dev-stage) ---
            partySize: {
              type: Sequelize.INTEGER,
              allowNull: true
@@ -367,9 +368,11 @@ export default class EloDatabase {
   }
 
   /**
-   * Additive schema migration: adds TrueSkill2 observation columns to an
-   * existing Elo_RoundPlayers table. Safe on all supported dialects
-   * (SQLite/MySQL/Postgres); no-ops when the columns already exist.
+   * Schema migration for TrueSkill2 observation columns: ADDS the current
+   * columns (no-op when present) and DROPS the legacy squadID/squadSize
+   * columns including their data — a deliberate dev-stage decision, NOT an
+   * additive migration. Safe on all supported dialects (SQLite/MySQL/
+   * Postgres); the drop is best-effort (try/catch).
    * Called from initDB inside the _executeWithRetry block (SQLite write mutex).
    */
   async _ensureTrueSkill2Columns() {

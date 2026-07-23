@@ -22,6 +22,7 @@ import {
   quitFactorMessage,
   killDeathFactorMessage
 } from './elo-trueskill2-factors.js';
+import { partyOffsetAt } from './elo-parameters.js';
 
 /**
  * Run a single round through the TrueSkill2 inference pipeline.
@@ -44,11 +45,7 @@ export function computeRoundUpdate(team1, team2, outcome, perPlayerMeta, paramet
   const partyShifts = (team) => {
     const offsets = parameters.partyOffsets;
     if (!offsets || offsets.length === 0) return null;
-    return team.map((p) => {
-      const size = perPlayerMeta[p.eosID]?.partySize ?? 1;
-      const idx = Math.min(Math.max(size - 1, 0), offsets.length - 1);
-      return offsets[idx] ?? 0;
-    });
+    return team.map((p) => partyOffsetAt(offsets, perPlayerMeta[p.eosID]?.partySize ?? 1));
   };
 
   const teamMeta = {

@@ -1066,8 +1066,11 @@ export default class EloTracker extends BasePlugin {
             scaledDeltaSigma,
             muAfter: rating.mu + scaledDeltaMu,
             sigmaAfter: Math.max(rating.sigma - scaledDeltaSigma, 0.5),
-            // TrueSkill2 observations (raw detection — gating is an engine
-            // parameter choice, so rebuilds can re-decide it)
+            // TrueSkill2 observations. clanTag/partySize are the live-computed
+            // clan-tag grouping (replay prefers these exact values; the in-game
+            // squad is deliberately NOT recorded — it carries no party signal).
+            // quit is raw detection — gating is an engine parameter choice, so
+            // rebuilds can re-decide it.
             clanTag: meta.clanTag ?? null,
             partySize: meta.partySize ?? 1,
             kills: meta.kills ?? 0,

@@ -24,22 +24,34 @@ import readline from 'readline';
 import fs from 'fs';
 import EloCalculator from '../utils/elo-calculator.js';
 import { computeRoundUpdate } from '../utils/elo-trueskill2-engine.js';
-import { loadParameters } from '../utils/elo-parameters.js';
+import { loadParameters, partyOffsetAt } from '../utils/elo-parameters.js';
 import { computePartySizes } from '../utils/elo-clan-grouping.js';
 
-const jsonlPath = process.argv[2];
-const dbPath    = process.argv[3];
+// Flags may appear anywhere; positionals are everything that is not a flag.
+const positionals = process.argv.slice(2).filter(a => !a.startsWith('--'));
+const jsonlPath = positionals[0];
+const dbPath    = positionals[1];
 
 if (!jsonlPath || !dbPath) {
-  console.error('Usage: node elo-calibrate.js <matchlog.jsonl> <db-backup.json>');
+  console.error('Usage: node elo-calibrate.js <matchlog.jsonl> <db-backup.json> [--party-case-sensitive] [--party-max-edit-distance=N] [--ignore-tags=A,B]');
   process.exit(1);
+}
+
+// Reject malformed values instead of letting NaN silently disable merging.
+function parseEditDistance(raw) {
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 0) {
+    console.error(`Invalid --party-max-edit-distance value: "${raw}" (expected a non-negative integer)`);
+    process.exit(1);
+  }
+  return n;
 }
 
 const PARTY_OPTIONS = {
   caseSensitive: process.argv.includes('--party-case-sensitive'),
   maxEditDistance: (() => {
     const a = process.argv.find(x => x.startsWith('--party-max-edit-distance='));
-    return a ? Number(a.split('=')[1]) : 1;
+    return a ? parseEditDistance(a.split('=')[1]) : 1;
   })(),
   ignoredTags: (() => {
     const a = process.argv.find(x => x.startsWith('--ignore-tags='));
@@ -97,10 +109,14 @@ rl.on('line', (line) => {
   if (!team1.length || !team2.length) return;
 
   const parsedMatch = { matchId, endedAt, outcome, players, team1, team2 };
-  parsedMatch.partyByEos = computePartySizes(
-    players.map(pl => ({ eosID: pl.eosID, name: pl.name, teamID: pl.teamID })),
-    PARTY_OPTIONS
-  );
+  // Name-based fallback grouping is only needed for pre-feature records; if
+  // every player carries the live-logged partySize, skip the recompute.
+  parsedMatch.partyByEos = players.some(pl => pl.partySize == null)
+    ? computePartySizes(
+        players.map(pl => ({ eosID: pl.eosID, name: pl.name, teamID: pl.teamID })),
+        PARTY_OPTIONS
+      )
+    : null;
   matches.push(parsedMatch);
 });
 
@@ -112,12 +128,8 @@ function winProbability(team1, team2, parameters, perPlayerMeta = {}) {
   const BETA = parameters.beta;
   const getRatio = (p) => p.participationRatio ?? 1.0;
 
-  const partyShiftOf = (p) => {
-    const offsets = parameters.partyOffsets;
-    const size = perPlayerMeta[p.eosID]?.partySize ?? 1;
-    const idx = Math.min(Math.max(size - 1, 0), offsets.length - 1);
-    return offsets[idx] ?? 0;
-  };
+  const partyShiftOf = (p) =>
+    partyOffsetAt(parameters.partyOffsets, perPlayerMeta[p.eosID]?.partySize ?? 1);
 
   let effectiveN1  = team1.reduce((s, p) => s + getRatio(p), 0);
   let effectiveN2  = team2.reduce((s, p) => s + getRatio(p), 0);

@@ -146,17 +146,21 @@ export async function rebuildFromLog(matchlogPath, backupPath = null, paramOverr
     // Per-player TrueSkill2 observations from the log. Old records lack these
     // fields entirely — the corresponding factors stay inert for those rounds.
     const roundDurationMin = (match.roundDuration ?? 0) / 60000;
-    const partyByEos = computePartySizes(
-      match.players.map(pl => ({ eosID: pl.eosID, name: pl.name, teamID: pl.teamID })),
-      partyOptions
-    );
+    // Name-based fallback grouping is only needed for pre-feature records; if
+    // every player carries the live-logged partySize, skip the recompute.
+    const partyByEos = match.players.some(pl => pl.partySize == null)
+      ? computePartySizes(
+          match.players.map(pl => ({ eosID: pl.eosID, name: pl.name, teamID: pl.teamID })),
+          partyOptions
+        )
+      : null;
     const perPlayerMeta = {};
     for (const p of match.players) {
       // Prefer the exact value the live plugin logged; only recompute from
       // names (partyByEos) when the log predates the partySize/clanTag fields.
       perPlayerMeta[p.eosID] = {
-        clanTag: p.clanTag ?? (partyByEos.get(p.eosID)?.clanTag ?? null),
-        partySize: p.partySize ?? (partyByEos.get(p.eosID)?.partySize ?? 1),
+        clanTag: p.clanTag ?? (partyByEos?.get(p.eosID)?.clanTag ?? null),
+        partySize: p.partySize ?? (partyByEos?.get(p.eosID)?.partySize ?? 1),
         experience: players.get(p.eosID).roundsPlayed,
         kills: p.kills,
         deaths: p.deaths,
@@ -206,7 +210,16 @@ async function main() {
   const applyQuitPenalty = process.argv.includes('--apply-quit-penalty');
   const partyCaseSensitive = process.argv.includes('--party-case-sensitive');
   const edArg = process.argv.find(a => a.startsWith('--party-max-edit-distance='));
-  const partyMaxEditDistance = edArg ? Number(edArg.split('=')[1]) : 1;
+  // Reject malformed values instead of letting NaN silently disable merging.
+  const parseEditDistance = (raw) => {
+    const n = Number(raw);
+    if (!Number.isInteger(n) || n < 0) {
+      console.error(`Invalid --party-max-edit-distance value: "${raw}" (expected a non-negative integer)`);
+      process.exit(1);
+    }
+    return n;
+  };
+  const partyMaxEditDistance = edArg ? parseEditDistance(edArg.split('=')[1]) : 1;
   const igArg = process.argv.find(a => a.startsWith('--ignore-tags='));
   const partyIgnoredTags = igArg ? igArg.split('=')[1].split(',').map(s => s.trim()).filter(Boolean) : [];
   const args = process.argv.slice(2).filter(a =>

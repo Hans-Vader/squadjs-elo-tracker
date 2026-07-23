@@ -160,12 +160,17 @@ All options live in the EloTracker plugin block. Values shown are the exact defa
 | `quitGraceSeconds` | `60` | A player unseen in `server.players` for longer than this at round end counts as departed. Keep ≥ ~2 RCON poll cycles (~60s). |
 | `quitParticipationThreshold` | `0.5` | Players with `participationRatio` below this **and** absent past the grace window are flagged as quitters. |
 | `enableQuitPenalty` | `false` | If true, detected quitters feed the quit factor into the engine. **Quit flags are recorded to DB/log regardless.** Calibrate `quitParams` first. |
+| `partyCaseSensitive` | `false` | Clan-tag matching for the party factor is case-sensitive (no normalization). Default `false` = normalized (case/homoglyph-insensitive). |
+| `partyMaxEditDistance` | `1` | Levenshtein distance for merging near-identical clan tags. **Caution:** distance 1 can also merge similar-but-*different* tags, and bare two-word names can false-positive as tags — audit with `tools/elo-clans-audit.js` and set `0` for exact-only matching. |
+| `partyIgnoredTags` | `[]` | Clan tags treated as public (community tags, not real clans); matched normalized. |
 
 > **Not configurable (hard-coded in code, listed for reference):** tier cutoffs `visitorMaxGames:3`, `provisionalMaxGames:9`, `regularMinGames:10`; balance flags `troublingDelta:1.5`, `criticalDelta:3.0`, `imbalanceRatio:1.5`; the `SIGMA_MULTIPLIER = 3.0`; DB prune windows (30 days provisional / 90 days calibrated).
 
 ### (b) The `trueskill2` parameter block
 
 `trueskill2: {}` (empty) → all neutral defaults below → **engine is identical to classic TrueSkill.** Overrides are merged element-wise onto these defaults (arrays keep their canonical length; unknown keys and null/undefined are ignored; `partyOffsets[0]` is always forced to 0).
+
+> **Placement matters:** the party *detection* options (`partyCaseSensitive`, `partyMaxEditDistance`, `partyIgnoredTags`) are **top-level plugin options** (§5(a)), NOT part of this block — placed here they are silently ignored. Likewise, the pre-rename key `squadOffsets` is no longer recognized: it is silently dropped, so a previously calibrated config must rename it to `partyOffsets`.
 
 | Parameter | Default | Effect |
 |-----------|---------|--------|
@@ -176,9 +181,6 @@ All options live in the EloTracker plugin block. Values shown are the exact defa
 | `tauPerMinute` | `0` | Time-based drift. **Defined but NOT consumed by the engine** — setting it has no effect. |
 | `drawProbability` | `0.01` | Assumed draw margin; feeds the draw threshold `epsilon`. |
 | `partyOffsets` | `[0.0 × 10]` | Party-size mean offset (eq. 7). Index = party size − 1; index 0 (solo) pinned to 0. |
-| `partyCaseSensitive` | `false` | Whether clan-tag matching is case-sensitive. |
-| `partyMaxEditDistance` | `1` | Maximum edit distance (Levenshtein) for clan-tag matching. |
-| `partyIgnoredTags` | `[]` | Clan tags treated as public (community tags); matched normalized. Default empty. |
 | `experienceOffsets` | `[0.0 × 200]` | Additive μ drift by matches played (eq. 8); index = matches capped at 199. Applied every match. |
 | `killParams.wPlayer` | `0.0` | Own-skill weight for kills (eq. 9). **0 disables the kill message entirely.** |
 | `killParams.wOpponent` | `0.0` | Opponent-strength weight for kills. |
@@ -209,10 +211,10 @@ TrueSkill2's published parameters were fit on **Halo 5** matchmaking data. Squad
 ### Run the calibrator
 
 ```bash
-node tools/elo-calibrate.js <matchlog.jsonl> <db-backup.json> [--ignore-tags=A,B]
+node tools/elo-calibrate.js <matchlog.jsonl> <db-backup.json> [--party-case-sensitive] [--party-max-edit-distance=N] [--ignore-tags=A,B]
 ```
 
-Both positional arguments are **required**. `--ignore-tags=A,B` optionally mirrors the live plugin's `partyIgnoredTags` so calibration party detection matches production. **The tool writes nothing to disk** — all output (progress, tables, and a ready-to-paste config block) goes to stdout.
+Both positional arguments are **required**. The three party flags (`--party-case-sensitive`, `--party-max-edit-distance=N`, `--ignore-tags=A,B`) must mirror the live plugin's `partyCaseSensitive` / `partyMaxEditDistance` / `partyIgnoredTags` — otherwise calibration groups parties differently than production scores them. **The tool writes nothing to disk** — all output (progress, tables, and a ready-to-paste config block) goes to stdout.
 
 If your log is split into fragments, merge them first (dedupes by matchId, first file wins, sorts chronologically):
 
@@ -261,7 +263,7 @@ Calibrating and pasting new parameters only changes how **future** rounds are sc
 > **⚠️ Back up your database first.** Copy the whole SQLite DB file *including its `-wal` and `-shm` sidecar files* (or dump all tables for MySQL/Postgres). Note that `!elo backup` / `exportPlayerStats` only covers `Elo_PlayerStats` — it does **not** capture the round history the tools rely on.
 
 ```bash
-node tools/elo-rebuild.js <matchlog.jsonl> <backup.json> [output.json] [--apply-quit-penalty] [--ignore-tags=A,B]
+node tools/elo-rebuild.js <matchlog.jsonl> <backup.json> [output.json] [--apply-quit-penalty] [--party-case-sensitive] [--party-max-edit-distance=N] [--ignore-tags=A,B]
 ```
 
 - **arg 1** `matchlog.jsonl` (required) — the authoritative source of outcomes + participants.

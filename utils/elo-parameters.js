@@ -101,6 +101,17 @@ function deepFreeze(obj) {
 export const DEFAULT_PARAMETERS = deepFreeze(buildDefaults());
 
 /**
+ * Clamped eq.-7 offset lookup, shared by the engine and the calibrator so the
+ * indexing rule (index = partySize − 1, clamped to the table, missing ⇒ 0)
+ * exists exactly once.
+ */
+export function partyOffsetAt(offsets, size) {
+  if (!offsets || offsets.length === 0) return 0;
+  const idx = Math.min(Math.max((size ?? 1) - 1, 0), offsets.length - 1);
+  return offsets[idx] ?? 0;
+}
+
+/**
  * Build a parameter object by merging user overrides onto the defaults.
  * - Arrays are merged element-wise and keep the canonical default length.
  * - Plain objects are shallow-merged (nested defaults survive partial overrides).
