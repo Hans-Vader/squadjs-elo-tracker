@@ -221,9 +221,9 @@ export function extractClanGroups(rawPlayers, options = {}) {
 }
 
 /**
- * Party size + clan tag per player, team-bound. Single source of truth for
- * the TrueSkill2 party (eq. 7) factor — used live by the plugin and on replay
- * by tools/elo-rebuild.js and tools/elo-calibrate.js.
+ * Party size + clan tag per player, team-bound. Intended as the single
+ * source of truth for the party (eq. 7) factor — wired into the plugin and
+ * the replay tools (elo-rebuild.js, elo-calibrate.js) in later tasks.
  *
  * @param {Array<{eosID, name, teamID}>} players  all round participants
  * @param {Object} [options]
@@ -243,7 +243,8 @@ export function computePartySizes(players, options = {}) {
     if (!p?.eosID) continue;
     result.set(p.eosID, { partySize: 1, clanTag: null }); // default solo
     if (!p.name) continue;
-    const t = p.teamID ?? 0;
+    if (p.teamID == null) continue; // unresolved team ⇒ never bucket/merge, stay solo
+    const t = p.teamID;
     if (!byTeam.has(t)) byTeam.set(t, []);
     byTeam.get(t).push(p);
   }

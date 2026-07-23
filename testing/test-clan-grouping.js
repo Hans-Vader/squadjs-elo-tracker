@@ -244,6 +244,8 @@ export default async function runClanGroupingTests(runTest) {
     ];
     const m = computePartySizes(players, { caseSensitive: true, maxEditDistance: 0 });
     if (m.get('a').partySize !== 1) throw new Error('caseSensitive:true must keep TR and tr apart');
+    if (m.get('b').partySize !== 1) throw new Error(`b expected solo, got ${m.get('b').partySize}`);
+    if (m.get('b').clanTag !== null) throw new Error(`b expected clanTag null, got ${m.get('b').clanTag}`);
   });
 
   await runTest('computePartySizes: maxEditDistance 0 does not merge near tags', async () => {
@@ -262,5 +264,15 @@ export default async function runClanGroupingTests(runTest) {
     ];
     const m = computePartySizes(players, { ignoredTags: ['TR'] });
     if (m.get('a').partySize !== 1 || m.get('a').clanTag !== null) throw new Error('ignored tag ⇒ public');
+  });
+
+  await runTest('computePartySizes: null/undefined teamID stays solo (no shared bucket)', async () => {
+    const players = [
+      { eosID: 'a', name: '[ACE] One', teamID: null },
+      { eosID: 'b', name: '[ACE] Two' } // teamID undefined
+    ];
+    const m = computePartySizes(players);
+    if (m.get('a').partySize !== 1 || m.get('a').clanTag !== null) throw new Error(`a expected solo, got ${JSON.stringify(m.get('a'))}`);
+    if (m.get('b').partySize !== 1) throw new Error(`b expected solo, got ${m.get('b').partySize}`);
   });
 }
