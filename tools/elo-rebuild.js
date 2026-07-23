@@ -6,7 +6,7 @@
  * (utils/elo-trueskill2-engine.js). Outputs a restore-compatible JSON backup.
  *
  * Usage:
- *   node elo-rebuild.js <matchlog.jsonl> <backup.json> [output.json] [--apply-quit-penalty]
+ *   node elo-rebuild.js <matchlog.jsonl> <backup.json> [output.json] [--apply-quit-penalty] [--party-case-sensitive] [--party-max-edit-distance=N]
  *
  * - matchlog.jsonl  Source of truth for all match outcomes + participants
  * - backup.json     Existing backup — used only to preserve steamID/discordID
@@ -14,15 +14,25 @@
  * - --apply-quit-penalty  Apply the TrueSkill2 quit factor to quit-flagged
  *                   log entries (default off, mirroring the plugin's
  *                   enableQuitPenalty default)
+ * - --party-case-sensitive          Clan-tag matching is case-sensitive
+ *                   (default off). Must mirror the live plugin's
+ *                   partyCaseSensitive config so replay parity holds.
+ * - --party-max-edit-distance=N     Levenshtein merge distance for
+ *                   near-duplicate clan tags (default 1, 0 = exact match
+ *                   only). Must mirror the live plugin's
+ *                   partyMaxEditDistance config so replay parity holds.
  *
  * The output is drop-in compatible with !elo restore.
  *
  * Notes on TrueSkill2 replay:
  * - With neutral default parameters this reproduces the legacy replay
  *   bit-for-bit (regression-tested in testing/test-elo-rebuild.js).
+ * - Party size/clan tag are RECOMPUTED per round from the logged player
+ *   names (not read from any logged squadID/squadSize), so replays group
+ *   consistently with the live plugin even for old logs.
  * - Records written before the TrueSkill2 upgrade carry no
- *   kills/deaths/squad/quit fields — those factors are simply inert for
- *   such rounds. New records replay with full observations.
+ *   kills/deaths/quit fields — those factors are simply inert for such
+ *   rounds. New records replay with full observations.
  * - `experience` is taken from the replay state (roundsPlayed so far), not
  *   from the logged experienceBefore, so partial logs stay self-consistent.
  */
@@ -32,6 +42,7 @@ import * as readline from 'readline';
 import { fileURLToPath } from 'url';
 import { computeRoundUpdate } from '../utils/elo-trueskill2-engine.js';
 import { loadParameters } from '../utils/elo-parameters.js';
+import { computePartySizes } from '../utils/elo-clan-grouping.js';
 
 // ─── Replay core ─────────────────────────────────────────────────────────────
 
@@ -52,13 +63,15 @@ async function loadMatches(jsonlPath) {
  * @param {string} matchlogPath   path to the production elo-match-log.jsonl
  * @param {string|null} backupPath  optional backup JSON for steamID/discordID
  * @param {Object} paramOverrides   loadParameters() overrides (neutral default)
- * @param {Object} options          { applyQuitPenalty?: boolean, quiet?: boolean }
+ * @param {Object} options          { applyQuitPenalty?: boolean, quiet?: boolean,
+ *                                    partyOptions?: {caseSensitive, maxEditDistance, ignoredTags} }
  * @returns {{ players: Map, parameters: Object, processed: number, skipped: number }}
  */
 export async function rebuildFromLog(matchlogPath, backupPath = null, paramOverrides = {}, options = {}) {
   const parameters = loadParameters(paramOverrides);
   const applyQuitPenalty = options.applyQuitPenalty ?? false;
   const quiet = options.quiet ?? true;
+  const partyOptions = options.partyOptions ?? {};
 
   const matches = await loadMatches(matchlogPath);
 
@@ -127,11 +140,15 @@ export async function rebuildFromLog(matchlogPath, backupPath = null, paramOverr
     // Per-player TrueSkill2 observations from the log. Old records lack these
     // fields entirely — the corresponding factors stay inert for those rounds.
     const roundDurationMin = (match.roundDuration ?? 0) / 60000;
+    const partyByEos = computePartySizes(
+      match.players.map(pl => ({ eosID: pl.eosID, name: pl.name, teamID: pl.teamID })),
+      partyOptions
+    );
     const perPlayerMeta = {};
     for (const p of match.players) {
       perPlayerMeta[p.eosID] = {
-        squadID: p.squadID ?? 0,
-        squadSize: p.squadSize ?? 1,
+        clanTag: (partyByEos.get(p.eosID) ?? {}).clanTag ?? null,
+        partySize: (partyByEos.get(p.eosID) ?? {}).partySize ?? 1,
         experience: players.get(p.eosID).roundsPlayed,
         kills: p.kills,
         deaths: p.deaths,
@@ -178,21 +195,31 @@ export async function rebuildFromLog(matchlogPath, backupPath = null, paramOverr
 // ─── CLI ─────────────────────────────────────────────────────────────────────
 
 async function main() {
-  const args = process.argv.slice(2).filter(a => a !== '--apply-quit-penalty');
   const applyQuitPenalty = process.argv.includes('--apply-quit-penalty');
+  const partyCaseSensitive = process.argv.includes('--party-case-sensitive');
+  const edArg = process.argv.find(a => a.startsWith('--party-max-edit-distance='));
+  const partyMaxEditDistance = edArg ? Number(edArg.split('=')[1]) : 1;
+  const args = process.argv.slice(2).filter(a =>
+    a !== '--apply-quit-penalty' &&
+    a !== '--party-case-sensitive' &&
+    !a.startsWith('--party-max-edit-distance='));
   const matchlogPath = args[0];
   const backupPath = args[1];
   const outputArg = args[2];
 
   if (!matchlogPath || !backupPath) {
-    console.error('Usage: node elo-rebuild.js <matchlog.jsonl> <backup.json> [output.json] [--apply-quit-penalty]');
+    console.error('Usage: node elo-rebuild.js <matchlog.jsonl> <backup.json> [output.json] [--apply-quit-penalty] [--party-case-sensitive] [--party-max-edit-distance=N]');
     process.exit(1);
   }
 
   const outputPath = outputArg ?? `elo-rebuilt-${Date.now()}.json`;
 
   const { players, parameters, processed, skipped } = await rebuildFromLog(
-    matchlogPath, backupPath, {}, { applyQuitPenalty, quiet: false }
+    matchlogPath, backupPath, {}, {
+      applyQuitPenalty,
+      quiet: false,
+      partyOptions: { caseSensitive: partyCaseSensitive, maxEditDistance: partyMaxEditDistance }
+    }
   );
 
   console.log(`\nDone. Processed: ${processed}, Skipped: ${skipped}`);
