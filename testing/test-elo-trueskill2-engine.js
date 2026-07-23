@@ -90,21 +90,21 @@ export default async function runEngineTests(runTest) {
 
   // --- Squad-offset factor (paper eq. 7) ---
 
-  const TUNED_SQUAD = loadParameters({
-    squadOffsets: [0, 0, 0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5]
+  const TUNED_PARTY = loadParameters({
+    partyOffsets: [0, 0, 0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5]
   });
   const four = (prefix) =>
     Array.from({ length: 4 }, (_, i) => ({ eosID: `${prefix}${i}`, mu: 25, sigma: 8.333, participationRatio: 1 }));
   const squadMeta = () => {
     const meta = {};
-    for (let i = 0; i < 4; i++) meta[`t1_${i}`] = { squadSize: 4 };
-    for (let i = 0; i < 4; i++) meta[`t2_${i}`] = { squadSize: 1 };
+    for (let i = 0; i < 4; i++) meta[`t1_${i}`] = { partySize: 4 };
+    for (let i = 0; i < 4; i++) meta[`t2_${i}`] = { partySize: 1 };
     return meta;
   };
 
-  await runTest('Squad offset: 4-stack favoured — smaller gain on win', async () => {
-    const baseline = computeRoundUpdate(four('t1_'), four('t2_'), 'team1win', {}, TUNED_SQUAD);
-    const withSquads = computeRoundUpdate(four('t1_'), four('t2_'), 'team1win', squadMeta(), TUNED_SQUAD);
+  await runTest('Party offset: 4-stack favoured — smaller gain on win', async () => {
+    const baseline = computeRoundUpdate(four('t1_'), four('t2_'), 'team1win', {}, TUNED_PARTY);
+    const withSquads = computeRoundUpdate(four('t1_'), four('t2_'), 'team1win', squadMeta(), TUNED_PARTY);
     if (withSquads.team1Updates[0].deltaMu >= baseline.team1Updates[0].deltaMu) {
       throw new Error(
         `favoured squad should gain less on win: ${withSquads.team1Updates[0].deltaMu} vs ${baseline.team1Updates[0].deltaMu}`
@@ -112,47 +112,47 @@ export default async function runEngineTests(runTest) {
     }
   });
 
-  await runTest('Squad offset: 4-stack favoured — bigger loss on defeat', async () => {
-    const baseline = computeRoundUpdate(four('t1_'), four('t2_'), 'team2win', {}, TUNED_SQUAD);
-    const withSquads = computeRoundUpdate(four('t1_'), four('t2_'), 'team2win', squadMeta(), TUNED_SQUAD);
+  await runTest('Party offset: 4-stack favoured — bigger loss on defeat', async () => {
+    const baseline = computeRoundUpdate(four('t1_'), four('t2_'), 'team2win', {}, TUNED_PARTY);
+    const withSquads = computeRoundUpdate(four('t1_'), four('t2_'), 'team2win', squadMeta(), TUNED_PARTY);
     if (withSquads.team1Updates[0].deltaMu >= baseline.team1Updates[0].deltaMu) {
       throw new Error('favoured squad losing must yield a more-negative deltaMu');
     }
   });
 
-  await runTest('Squad offset: solos (size 1) exactly match baseline', async () => {
+  await runTest('Party offset: solos (size 1) exactly match baseline', async () => {
     const t1 = [{ eosID: 'a', mu: 25, sigma: 8.333, participationRatio: 1 }];
     const t2 = [{ eosID: 'b', mu: 25, sigma: 8.333, participationRatio: 1 }];
-    const baseline = computeRoundUpdate(t1, t2, 'team1win', {}, TUNED_SQUAD);
-    const withMeta = computeRoundUpdate(t1, t2, 'team1win', { a: { squadSize: 1 }, b: { squadSize: 1 } }, TUNED_SQUAD);
+    const baseline = computeRoundUpdate(t1, t2, 'team1win', {}, TUNED_PARTY);
+    const withMeta = computeRoundUpdate(t1, t2, 'team1win', { a: { partySize: 1 }, b: { partySize: 1 } }, TUNED_PARTY);
     if (Math.abs(baseline.team1Updates[0].deltaMu - withMeta.team1Updates[0].deltaMu) > 1e-9) {
-      throw new Error('squadSize=1 must match baseline exactly (squadOffsets[0] === 0)');
+      throw new Error('partySize=1 must match baseline exactly (partyOffsets[0] === 0)');
     }
   });
 
-  await runTest('Squad offset: neutral DEFAULT_PARAMETERS ignore squadSize', async () => {
+  await runTest('Party offset: neutral DEFAULT_PARAMETERS ignore partySize', async () => {
     const t1 = [{ eosID: 'a', mu: 25, sigma: 8.333, participationRatio: 1 }];
     const t2 = [{ eosID: 'b', mu: 25, sigma: 8.333, participationRatio: 1 }];
     const r0 = computeRoundUpdate(t1, t2, 'team1win', {}, DEFAULT_PARAMETERS);
-    const r1 = computeRoundUpdate(t1, t2, 'team1win', { a: { squadSize: 9 }, b: { squadSize: 1 } }, DEFAULT_PARAMETERS);
+    const r1 = computeRoundUpdate(t1, t2, 'team1win', { a: { partySize: 9 }, b: { partySize: 1 } }, DEFAULT_PARAMETERS);
     if (Math.abs(r0.team1Updates[0].deltaMu - r1.team1Updates[0].deltaMu) > 1e-9) {
-      throw new Error('with neutral DEFAULT_PARAMETERS, squadSize must have no effect');
+      throw new Error('with neutral DEFAULT_PARAMETERS, partySize must have no effect');
     }
   });
 
-  await runTest('Squad offset: oversized squadSize clamps to last offset entry', async () => {
+  await runTest('Party offset: oversized partySize clamps to last offset entry', async () => {
     const t1 = four('t1_');
     const t2 = four('t2_');
     const metaAt10 = squadMeta();
     const metaAt99 = squadMeta();
     for (let i = 0; i < 4; i++) {
-      metaAt10[`t1_${i}`] = { squadSize: 10 };
-      metaAt99[`t1_${i}`] = { squadSize: 99 };
+      metaAt10[`t1_${i}`] = { partySize: 10 };
+      metaAt99[`t1_${i}`] = { partySize: 99 };
     }
-    const r10 = computeRoundUpdate(t1, t2, 'team1win', metaAt10, TUNED_SQUAD);
-    const r99 = computeRoundUpdate(t1, t2, 'team1win', metaAt99, TUNED_SQUAD);
+    const r10 = computeRoundUpdate(t1, t2, 'team1win', metaAt10, TUNED_PARTY);
+    const r99 = computeRoundUpdate(t1, t2, 'team1win', metaAt99, TUNED_PARTY);
     if (Math.abs(r10.team1Updates[0].deltaMu - r99.team1Updates[0].deltaMu) > 1e-12) {
-      throw new Error('squadSize beyond the offset table must clamp to the last entry');
+      throw new Error('partySize beyond the offset table must clamp to the last entry');
     }
   });
 
@@ -306,7 +306,7 @@ export default async function runEngineTests(runTest) {
     const t1 = [{ eosID: 'a', mu: 25, sigma: 8.333, participationRatio: 1 }];
     const t2 = [{ eosID: 'b', mu: 25, sigma: 8.333, participationRatio: 1 }];
     const baseline = computeRoundUpdate(t1, t2, 'team1win', {}, TUNED_KD);
-    const withEmptyMeta = computeRoundUpdate(t1, t2, 'team1win', { a: { squadSize: 1 }, b: { squadSize: 1 } }, TUNED_KD);
+    const withEmptyMeta = computeRoundUpdate(t1, t2, 'team1win', { a: { partySize: 1 }, b: { partySize: 1 } }, TUNED_KD);
     if (Math.abs(baseline.team1Updates[0].deltaMu - withEmptyMeta.team1Updates[0].deltaMu) > 1e-9) {
       throw new Error('meta without kills/timePlayedMin must not change the update');
     }

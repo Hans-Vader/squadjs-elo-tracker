@@ -29,7 +29,7 @@ import {
  * @param {Array<{eosID?, mu, sigma, participationRatio?}>} team1
  * @param {Array<{eosID?, mu, sigma, participationRatio?}>} team2
  * @param {'team1win'|'team2win'|'draw'} outcome
- * @param {Object} perPlayerMeta  eosID → { squadSize, squadID, kills, deaths,
+ * @param {Object} perPlayerMeta  eosID → { partySize, clanTag, kills, deaths,
  *                                quit, experience, timePlayedMin } (all optional)
  * @param {Object} parameters     frozen object from elo-parameters.js
  *
@@ -38,23 +38,22 @@ import {
  *   then newMu = mu + deltaMu and newSigma = sigma − deltaSigma.
  */
 export function computeRoundUpdate(team1, team2, outcome, perPlayerMeta, parameters) {
-  // Squad-offset factor (eq. 7): per-player performance-mean shifts by squad
-  // size. squadOffsets[0] (solo) is pinned to 0, so the default squadSize=1
-  // yields no shift. Ratio-weighting and slot-scaling happen inside
-  // teamFactorMessages, next to the teamMu computation they must mirror.
-  const squadShifts = (team) => {
-    const offsets = parameters.squadOffsets;
+  // Party-offset factor (eq. 7): per-player performance-mean shift by clan-tag
+  // party size. partyOffsets[0] (solo) is pinned to 0, so partySize=1 yields no
+  // shift. Ratio-weighting and slot-scaling happen inside teamFactorMessages.
+  const partyShifts = (team) => {
+    const offsets = parameters.partyOffsets;
     if (!offsets || offsets.length === 0) return null;
     return team.map((p) => {
-      const size = perPlayerMeta[p.eosID]?.squadSize ?? 1;
+      const size = perPlayerMeta[p.eosID]?.partySize ?? 1;
       const idx = Math.min(Math.max(size - 1, 0), offsets.length - 1);
       return offsets[idx] ?? 0;
     });
   };
 
   const teamMeta = {
-    team1: { perPlayerShifts: squadShifts(team1) },
-    team2: { perPlayerShifts: squadShifts(team2) }
+    team1: { perPlayerShifts: partyShifts(team1) },
+    team2: { perPlayerShifts: partyShifts(team2) }
   };
   const tfm = teamFactorMessages(team1, team2, outcome, parameters, teamMeta);
 
