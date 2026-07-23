@@ -145,6 +145,7 @@ import { EloDiscord } from '../utils/elo-discord.js';
 import EloCommands from '../utils/elo-commands.js';
 import { loadParameters } from '../utils/elo-parameters.js';
 import { computeRoundUpdate } from '../utils/elo-trueskill2-engine.js';
+import { computePartySizes } from '../utils/elo-clan-grouping.js';
 
 export default class EloTracker extends BasePlugin {
   static version = '1.3.0';
@@ -207,9 +208,21 @@ export default class EloTracker extends BasePlugin {
          default: false,
          type: 'boolean'
        },
+       partyCaseSensitive: {
+         required: false,
+         description: 'Match clan tags case-sensitively (no normalization). Default false = normalized (case/homoglyph-insensitive).',
+         default: false,
+         type: 'boolean'
+       },
+       partyMaxEditDistance: {
+         required: false,
+         description: 'Levenshtein distance for merging near-identical clan tags (0 = exact only).',
+         default: 1,
+         type: 'number'
+       },
        trueskill2: {
          required: false,
-         description: 'TrueSkill2 engine parameter overrides (squadOffsets, experienceOffsets, killParams, deathParams, quitParams, ...). Neutral by default — see utils/elo-parameters.js.',
+         description: 'TrueSkill2 engine parameter overrides (partyOffsets, experienceOffsets, killParams, deathParams, quitParams, ...). Neutral by default — see utils/elo-parameters.js.',
          default: {},
          type: 'object'
        }
@@ -239,8 +252,8 @@ export default class EloTracker extends BasePlugin {
     this.params = loadParameters(this.options.trueskill2 ?? {});
 
     // Per-round TrueSkill2 observations, cleared on NEW_GAME.
-    // Kills = PLAYER_WOUNDED downs (Squad scoreboard semantics);
-    // deaths = PLAYER_DIED give-up/bleed-out (revives negate a death).
+    // Kills = PLAYER_WOUNDED downs; deaths = PLAYER_DIED (revives negate a death).
+    // Party size (eq.7) is derived from clan tags at round end, not in-game squads.
     this.killsByEosID = new Map();
     this.deathsByEosID = new Map();
     // eosID → last timestamp the player was seen in server.players
@@ -608,15 +621,16 @@ export default class EloTracker extends BasePlugin {
 
   /**
    * Build the per-player TrueSkill2 observation map for the engine.
-   * Squad size counts ALL round participants sharing (assignedTeamID,
-   * dominantSquadID) — including ones below the ELO eligibility floor —
-   * because they were really in that squad. Squad 0 (unassigned) is solo.
+   * Party size (eq. 7) is derived from clan tags in player names, grouped
+   * per team — NOT in-game squads. ALL round participants (even ones below
+   * the ELO eligibility floor) count toward a party's size, because they
+   * were really in that clan group.
    *
    * @param {Array} participants  full endRound() output
    * @param {Array} eligible      participants above minParticipationRatio
    * @param {Set<string>|null} quitters  detected quitters (_detectQuittersAt)
    * @param {number|null} roundEndTime   for timePlayedMin (kill/death factor)
-   * @returns {Object} eosID → { squadID, squadSize, experience, kills, deaths,
+   * @returns {Object} eosID → { clanTag, partySize, experience, kills, deaths,
    *                             timePlayedMin, quit, quitDetected }
    */
   _buildPerPlayerMeta(participants, eligible, quitters = null, roundEndTime = null) {
@@ -627,21 +641,24 @@ export default class EloTracker extends BasePlugin {
       roundEndTime != null && startTime != null
         ? Math.max(0, (roundEndTime - startTime) / 60000)
         : 0;
-    const squadCounts = new Map(); // "teamID:squadID" → member count
-    for (const p of participants) {
-      const sid = p.dominantSquadID ?? 0;
-      if (sid === 0) continue;
-      const key = `${p.assignedTeamID}:${sid}`;
-      squadCounts.set(key, (squadCounts.get(key) ?? 0) + 1);
-    }
+
+    // Clan-tag parties per team; ALL participants count (even ineligible ones).
+    const partyByEos = computePartySizes(
+      participants.map((p) => ({ eosID: p.eosID, name: p.name, teamID: p.assignedTeamID })),
+      {
+        caseSensitive: this.options.partyCaseSensitive,
+        maxEditDistance: this.options.partyMaxEditDistance,
+        ignoredTags: this.options.partyIgnoredTags // undefined until PART B ⇒ []
+      }
+    );
 
     const perPlayerMeta = {};
     for (const p of eligible) {
-      const sid = p.dominantSquadID ?? 0;
       const quitDetected = quitters?.has(p.eosID) ?? false;
+      const party = partyByEos.get(p.eosID) ?? { partySize: 1, clanTag: null };
       perPlayerMeta[p.eosID] = {
-        squadID: sid,
-        squadSize: sid === 0 ? 1 : (squadCounts.get(`${p.assignedTeamID}:${sid}`) ?? 1),
+        clanTag: party.clanTag,
+        partySize: party.partySize,
         // Experience (eq. 8) = rounds played BEFORE this round. Must be read
         // before processTeam() writes the post-round cache entry.
         experience: this.eloCache.get(p.eosID)?.roundsPlayed ?? 0,
@@ -1045,8 +1062,8 @@ export default class EloTracker extends BasePlugin {
             sigmaAfter: Math.max(rating.sigma - scaledDeltaSigma, 0.5),
             // TrueSkill2 observations (raw detection — gating is an engine
             // parameter choice, so rebuilds can re-decide it)
-            squadID: meta.squadID ?? 0,
-            squadSize: meta.squadSize ?? 1,
+            clanTag: meta.clanTag ?? null,
+            partySize: meta.partySize ?? 1,
             kills: meta.kills ?? 0,
             deaths: meta.deaths ?? 0,
             quit: meta.quitDetected ?? false,
@@ -1072,8 +1089,8 @@ export default class EloTracker extends BasePlugin {
             scaledDeltaSigma,
             muAfter: rating.mu + scaledDeltaMu,
             sigmaAfter: Math.max(rating.sigma - scaledDeltaSigma, 0.5),
-            squadID: meta.squadID ?? 0,
-            squadSize: meta.squadSize ?? 1,
+            clanTag: meta.clanTag ?? null,
+            partySize: meta.partySize ?? 1,
             kills: meta.kills ?? 0,
             deaths: meta.deaths ?? 0,
             quit: meta.quitDetected ?? false,
@@ -1112,8 +1129,8 @@ export default class EloTracker extends BasePlugin {
         scaledDeltaSigma: p.scaledDeltaSigma,
         muAfter: p.muAfter,
         sigmaAfter: p.sigmaAfter,
-        squadID: p.squadID,
-        squadSize: p.squadSize,
+        partySize: p.partySize,
+        clanTag: p.clanTag,
         kills: p.kills,
         deaths: p.deaths,
         quit: p.quit,

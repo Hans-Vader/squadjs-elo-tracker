@@ -266,22 +266,22 @@ export default async function runTrackerTests(runTest) {
     if (quitters.has('s')) throw new Error('S (full round, present at end) must NOT be a quitter');
   });
 
-  await runTest('PerPlayerMeta: squadSize counted per (team, dominantSquad); squad 0 is solo', async () => {
+  await runTest('PerPlayerMeta: partySize by clan tag per team; no tag ⇒ solo', async () => {
     const { tracker } = await makeTrackerForTest();
     const participants = [
-      { eosID: 'a', assignedTeamID: 1, dominantSquadID: 2, participationRatio: 1 },
-      { eosID: 'b', assignedTeamID: 1, dominantSquadID: 2, participationRatio: 1 },
-      { eosID: 'c', assignedTeamID: 1, dominantSquadID: 2, participationRatio: 0.1 }, // ineligible but still in the squad
-      { eosID: 'd', assignedTeamID: 2, dominantSquadID: 2, participationRatio: 1 },  // same squad number, other team
-      { eosID: 'e', assignedTeamID: 2, dominantSquadID: 0, participationRatio: 1 }   // unassigned
+      { eosID: 'a', name: '[ACE] Alpha',  assignedTeamID: 1, participationRatio: 1 },
+      { eosID: 'b', name: '[ACE] Bravo',  assignedTeamID: 1, participationRatio: 1 },
+      { eosID: 'c', name: '[ACE] Charlie',assignedTeamID: 1, participationRatio: 0.1 }, // ineligible, still counts
+      { eosID: 'd', name: '[ACE] Delta',  assignedTeamID: 2, participationRatio: 1 },   // same tag, other team
+      { eosID: 'e', name: 'NoClanGuy',    assignedTeamID: 2, participationRatio: 1 }
     ];
     const eligible = participants.filter((p) => p.participationRatio >= 0.15);
     const meta = tracker._buildPerPlayerMeta(participants, eligible);
 
-    if (meta.a.squadSize !== 3) throw new Error(`a: squad of 3 expected, got ${meta.a.squadSize}`);
-    if (meta.a.squadID !== 2) throw new Error(`a: squadID 2 expected, got ${meta.a.squadID}`);
-    if (meta.d.squadSize !== 1) throw new Error(`d: same squadID on other team must not merge, got ${meta.d.squadSize}`);
-    if (meta.e.squadSize !== 1) throw new Error(`e: unassigned counts as solo, got ${meta.e.squadSize}`);
+    if (meta.a.partySize !== 3) throw new Error(`a: party of 3 (incl. ineligible c) expected, got ${meta.a.partySize}`);
+    if (meta.a.clanTag !== 'ACE') throw new Error(`a: clanTag ACE expected, got ${meta.a.clanTag}`);
+    if (meta.d.partySize !== 1) throw new Error(`d: lone ACE on other team must not merge, got ${meta.d.partySize}`);
+    if (meta.e.partySize !== 1 || meta.e.clanTag !== null) throw new Error(`e: no clan ⇒ solo/null`);
     if (meta.c) throw new Error('ineligible players get no meta entry');
   });
 
@@ -334,8 +334,8 @@ export default async function runTrackerTests(runTest) {
     const session = createMockSession();
     session.roundStartTime = 1000;
     session.endRound = () => [
-      { eosID: 'p1', name: 'P1', steamID: 's1', assignedTeamID: 1, dominantSquadID: 3, participationRatio: 1.0 },
-      { eosID: 'p2', name: 'P2', steamID: 's2', assignedTeamID: 1, dominantSquadID: 3, participationRatio: 1.0 },
+      { eosID: 'p1', name: '[XYZ] P1', steamID: 's1', assignedTeamID: 1, dominantSquadID: 3, participationRatio: 1.0 },
+      { eosID: 'p2', name: '[XYZ] P2', steamID: 's2', assignedTeamID: 1, dominantSquadID: 3, participationRatio: 1.0 },
       { eosID: 'p3', name: 'P3', steamID: 's3', assignedTeamID: 2, dominantSquadID: 0, participationRatio: 1.0 }
     ];
     tracker.session = session;
@@ -357,14 +357,14 @@ export default async function runTrackerTests(runTest) {
     const logP1 = capturedLog.players.find((p) => p.eosID === 'p1');
     if (logP1.kills !== 5) throw new Error(`log kills expected 5, got ${logP1.kills}`);
     if (logP1.deaths !== 2) throw new Error(`log deaths expected 2, got ${logP1.deaths}`);
-    if (logP1.squadID !== 3) throw new Error(`log squadID expected 3, got ${logP1.squadID}`);
-    if (logP1.squadSize !== 2) throw new Error(`log squadSize expected 2, got ${logP1.squadSize}`);
+    if (logP1.clanTag !== 'XYZ') throw new Error(`log clanTag expected XYZ, got ${logP1.clanTag}`);
+    if (logP1.partySize !== 2) throw new Error(`log partySize expected 2, got ${logP1.partySize}`);
     if (logP1.quit !== false) throw new Error(`log quit expected false, got ${logP1.quit}`);
     if (logP1.experienceBefore !== 12) throw new Error(`log experienceBefore expected 12, got ${logP1.experienceBefore}`);
 
     if (!capturedRows) throw new Error('insertRoundPlayers not called');
     const rowP1 = capturedRows.find((r) => r.eosID === 'p1');
-    if (rowP1.kills !== 5 || rowP1.deaths !== 2 || rowP1.squadID !== 3 || rowP1.squadSize !== 2) {
+    if (rowP1.kills !== 5 || rowP1.deaths !== 2 || rowP1.partySize !== 2 || rowP1.clanTag !== 'XYZ') {
       throw new Error(`DB row TS2 fields wrong: ${JSON.stringify(rowP1)}`);
     }
     if (rowP1.quit !== false || rowP1.experienceBefore !== 12) {
