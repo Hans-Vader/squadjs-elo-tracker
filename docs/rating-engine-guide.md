@@ -178,7 +178,7 @@ All options live in the EloTracker plugin block. Values shown are the exact defa
 | `partyOffsets` | `[0.0 × 10]` | Party-size mean offset (eq. 7). Index = party size − 1; index 0 (solo) pinned to 0. |
 | `partyCaseSensitive` | `false` | Whether clan-tag matching is case-sensitive. |
 | `partyMaxEditDistance` | `1` | Maximum edit distance (Levenshtein) for clan-tag matching. |
-| `partyIgnoredTags` | `[]` | List of clan tags to exclude from party detection. |
+| `partyIgnoredTags` | `[]` | Clan tags treated as public (community tags); matched normalized. Default empty. |
 | `experienceOffsets` | `[0.0 × 200]` | Additive μ drift by matches played (eq. 8); index = matches capped at 199. Applied every match. |
 | `killParams.wPlayer` | `0.0` | Own-skill weight for kills (eq. 9). **0 disables the kill message entirely.** |
 | `killParams.wOpponent` | `0.0` | Opponent-strength weight for kills. |
@@ -209,10 +209,10 @@ TrueSkill2's published parameters were fit on **Halo 5** matchmaking data. Squad
 ### Run the calibrator
 
 ```bash
-node tools/elo-calibrate.js <matchlog.jsonl> <db-backup.json>
+node tools/elo-calibrate.js <matchlog.jsonl> <db-backup.json> [--ignore-tags=A,B]
 ```
 
-Both arguments are **required and positional**. No flags, no environment variables. **The tool writes nothing to disk** — all output (progress, tables, and a ready-to-paste config block) goes to stdout.
+Both positional arguments are **required**. `--ignore-tags=A,B` optionally mirrors the live plugin's `partyIgnoredTags` so calibration party detection matches production. **The tool writes nothing to disk** — all output (progress, tables, and a ready-to-paste config block) goes to stdout.
 
 If your log is split into fragments, merge them first (dedupes by matchId, first file wins, sorts chronologically):
 
@@ -261,7 +261,7 @@ Calibrating and pasting new parameters only changes how **future** rounds are sc
 > **⚠️ Back up your database first.** Copy the whole SQLite DB file *including its `-wal` and `-shm` sidecar files* (or dump all tables for MySQL/Postgres). Note that `!elo backup` / `exportPlayerStats` only covers `Elo_PlayerStats` — it does **not** capture the round history the tools rely on.
 
 ```bash
-node tools/elo-rebuild.js <matchlog.jsonl> <backup.json> [output.json] [--apply-quit-penalty]
+node tools/elo-rebuild.js <matchlog.jsonl> <backup.json> [output.json] [--apply-quit-penalty] [--ignore-tags=A,B]
 ```
 
 - **arg 1** `matchlog.jsonl` (required) — the authoritative source of outcomes + participants.

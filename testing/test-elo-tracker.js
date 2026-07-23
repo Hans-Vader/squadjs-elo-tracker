@@ -388,4 +388,20 @@ export default async function runTrackerTests(runTest) {
     const quitters = tracker._detectQuittersAt(110000);
     if (quitters.has('l')) throw new Error('Late joiner present at round end must NOT be flagged as quitter');
   });
+
+  await runTest('PerPlayerMeta: partyIgnoredTags treats community tag as public', async () => {
+    const server = createMockServer();
+    const tracker = new EloTracker(server, { ...mockOptions, partyIgnoredTags: ['ACE'] }, mockConnectors);
+    tracker.db = createMockDb();
+    tracker.session = createMockSession();
+    await tracker.mount();
+    const participants = [
+      { eosID: 'a', name: '[ACE] Alpha', assignedTeamID: 1, participationRatio: 1 },
+      { eosID: 'b', name: '[ACE] Bravo', assignedTeamID: 1, participationRatio: 1 }
+    ];
+    const meta = tracker._buildPerPlayerMeta(participants, participants);
+    if (meta.a.partySize !== 1 || meta.a.clanTag !== null) {
+      throw new Error(`ignored tag must make members public, got ${JSON.stringify(meta.a)}`);
+    }
+  });
 }

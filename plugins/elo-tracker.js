@@ -220,6 +220,12 @@ export default class EloTracker extends BasePlugin {
          default: 1,
          type: 'number'
        },
+       partyIgnoredTags: {
+         required: false,
+         description: 'Clan tags to treat as public (community tags that are not real clans). Matched normalized. Default empty.',
+         default: [],
+         type: 'array'
+       },
        trueskill2: {
          required: false,
          description: 'TrueSkill2 engine parameter overrides (partyOffsets, experienceOffsets, killParams, deathParams, quitParams, ...). Neutral by default — see utils/elo-parameters.js.',

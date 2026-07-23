@@ -6,7 +6,7 @@
  * (utils/elo-trueskill2-engine.js). Outputs a restore-compatible JSON backup.
  *
  * Usage:
- *   node elo-rebuild.js <matchlog.jsonl> <backup.json> [output.json] [--apply-quit-penalty] [--party-case-sensitive] [--party-max-edit-distance=N]
+ *   node elo-rebuild.js <matchlog.jsonl> <backup.json> [output.json] [--apply-quit-penalty] [--party-case-sensitive] [--party-max-edit-distance=N] [--ignore-tags=A,B]
  *
  * - matchlog.jsonl  Source of truth for all match outcomes + participants
  * - backup.json     Existing backup — used only to preserve steamID/discordID
@@ -21,6 +21,10 @@
  *                   near-duplicate clan tags (default 1, 0 = exact match
  *                   only). Must mirror the live plugin's
  *                   partyMaxEditDistance config so replay parity holds.
+ * - --ignore-tags=A,B               Comma-separated clan tags to treat as
+ *                   public (community tags). Default empty. Must mirror
+ *                   the live plugin's partyIgnoredTags config so replay
+ *                   parity holds.
  *
  * The output is drop-in compatible with !elo restore.
  *
@@ -199,16 +203,19 @@ async function main() {
   const partyCaseSensitive = process.argv.includes('--party-case-sensitive');
   const edArg = process.argv.find(a => a.startsWith('--party-max-edit-distance='));
   const partyMaxEditDistance = edArg ? Number(edArg.split('=')[1]) : 1;
+  const igArg = process.argv.find(a => a.startsWith('--ignore-tags='));
+  const partyIgnoredTags = igArg ? igArg.split('=')[1].split(',').map(s => s.trim()).filter(Boolean) : [];
   const args = process.argv.slice(2).filter(a =>
     a !== '--apply-quit-penalty' &&
     a !== '--party-case-sensitive' &&
-    !a.startsWith('--party-max-edit-distance='));
+    !a.startsWith('--party-max-edit-distance=') &&
+    !a.startsWith('--ignore-tags='));
   const matchlogPath = args[0];
   const backupPath = args[1];
   const outputArg = args[2];
 
   if (!matchlogPath || !backupPath) {
-    console.error('Usage: node elo-rebuild.js <matchlog.jsonl> <backup.json> [output.json] [--apply-quit-penalty] [--party-case-sensitive] [--party-max-edit-distance=N]');
+    console.error('Usage: node elo-rebuild.js <matchlog.jsonl> <backup.json> [output.json] [--apply-quit-penalty] [--party-case-sensitive] [--party-max-edit-distance=N] [--ignore-tags=A,B]');
     process.exit(1);
   }
 
@@ -218,7 +225,7 @@ async function main() {
     matchlogPath, backupPath, {}, {
       applyQuitPenalty,
       quiet: false,
-      partyOptions: { caseSensitive: partyCaseSensitive, maxEditDistance: partyMaxEditDistance }
+      partyOptions: { caseSensitive: partyCaseSensitive, maxEditDistance: partyMaxEditDistance, ignoredTags: partyIgnoredTags }
     }
   );
 

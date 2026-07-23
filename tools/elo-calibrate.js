@@ -40,6 +40,10 @@ const PARTY_OPTIONS = {
   maxEditDistance: (() => {
     const a = process.argv.find(x => x.startsWith('--party-max-edit-distance='));
     return a ? Number(a.split('=')[1]) : 1;
+  })(),
+  ignoredTags: (() => {
+    const a = process.argv.find(x => x.startsWith('--ignore-tags='));
+    return a ? a.split('=')[1].split(',').map(s => s.trim()).filter(Boolean) : [];
   })()
 };
 
