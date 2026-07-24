@@ -250,11 +250,97 @@ export default async function runClanGroupingTests(runTest) {
 
   await runTest('computePartySizes: maxEditDistance 0 does not merge near tags', async () => {
     const players = [
-      { eosID: 'a', name: 'CAV1 One', teamID: 1 },
-      { eosID: 'b', name: 'CAV2 Two', teamID: 1 }
+      { eosID: 'a', name: '[CAV1] One', teamID: 1 },
+      { eosID: 'b', name: '[CAV2] Two', teamID: 1 }
     ];
     if (computePartySizes(players, { maxEditDistance: 0 }).get('a').partySize !== 1) throw new Error('editDistance 0 ⇒ no merge');
     if (computePartySizes(players, { maxEditDistance: 1 }).get('a').partySize !== 2) throw new Error('editDistance 1 ⇒ merge');
+  });
+
+  // ─── computePartySizes — bare-prefix corroboration (C1 fix) ────────
+
+  await runTest('computePartySizes: bare two-word names do not form phantom parties', async () => {
+    const players = [
+      { eosID: 'a', name: 'The Rock', teamID: 1 },
+      { eosID: 'b', name: 'The Bull', teamID: 1 },
+      { eosID: 'c', name: 'John Smith', teamID: 1 },
+      { eosID: 'd', name: 'Jon Smart', teamID: 1 } // ed-1 from JOHN
+    ];
+    const m = computePartySizes(players);
+    for (const id of ['a', 'b', 'c', 'd']) {
+      const r = m.get(id);
+      if (r.partySize !== 1 || r.clanTag !== null) {
+        throw new Error(`${id} expected solo/null, got ${JSON.stringify(r)}`);
+      }
+    }
+  });
+
+  await runTest('computePartySizes: bare prefix corroborated by explicit tag ⇒ party', async () => {
+    const players = [
+      { eosID: 'a', name: '[KM] Warlord', teamID: 1 },
+      { eosID: 'b', name: 'KM Lookout', teamID: 1 },
+      { eosID: 'c', name: 'KM Sniper', teamID: 1 }
+    ];
+    const m = computePartySizes(players);
+    for (const id of ['a', 'b', 'c']) {
+      if (m.get(id).partySize !== 3) throw new Error(`${id} expected party of 3, got ${m.get(id).partySize}`);
+      if (m.get(id).clanTag !== 'KM') throw new Error(`${id} expected KM, got ${m.get(id).clanTag}`);
+    }
+  });
+
+  await runTest('computePartySizes: two bare-prefix players without anchor stay solo', async () => {
+    const players = [
+      { eosID: 'a', name: 'KM Lookout', teamID: 1 },
+      { eosID: 'b', name: 'KM Sniper', teamID: 1 }
+    ];
+    const m = computePartySizes(players);
+    if (m.get('a').partySize !== 1 || m.get('b').partySize !== 1) throw new Error('bare pair without explicit anchor must stay solo');
+  });
+
+  await runTest('computePartySizes: corroboration is team-bound', async () => {
+    const players = [
+      { eosID: 'a', name: '[KM] Warlord', teamID: 1 },
+      { eosID: 'b', name: '[KM] Bravo', teamID: 1 },
+      { eosID: 'c', name: 'KM Lookout', teamID: 2 },
+      { eosID: 'd', name: 'KM Sniper', teamID: 2 }
+    ];
+    const m = computePartySizes(players);
+    if (m.get('a').partySize !== 2) throw new Error('team1 explicit pair must stay a party');
+    if (m.get('c').partySize !== 1 || m.get('d').partySize !== 1) {
+      throw new Error('team2 bare pair must not borrow team1 anchor');
+    }
+  });
+
+  await runTest('computePartySizes: edit-distance merge propagates the explicit anchor', async () => {
+    const players = [
+      { eosID: 'a', name: '[CLAN] One', teamID: 1 },
+      { eosID: 'b', name: '[CLAN] Two', teamID: 1 },
+      { eosID: 'c', name: 'CLAM Three', teamID: 1 } // bare, ed-1 from CLAN
+    ];
+    const m = computePartySizes(players, { maxEditDistance: 1 });
+    if (m.get('c').partySize !== 3) throw new Error(`bare ed-1 member must join anchored party, got ${m.get('c').partySize}`);
+  });
+
+  await runTest('computePartySizes: open-only bracket counts as explicit anchor', async () => {
+    const players = [
+      { eosID: 'a', name: '[OPN Alpha', teamID: 1 },
+      { eosID: 'b', name: 'OPN Bravo', teamID: 1 }
+    ];
+    const m = computePartySizes(players);
+    if (m.get('a').partySize !== 2 || m.get('b').partySize !== 2) {
+      throw new Error(`open-bracket name must anchor the party, got a=${m.get('a').partySize} b=${m.get('b').partySize}`);
+    }
+  });
+
+  await runTest('extractClanGroups: requireExplicit drops bare-only buckets, default keeps them', async () => {
+    const players = [
+      { eosID: 'a', name: 'KM Lookout' },
+      { eosID: 'b', name: 'KM Sniper' }
+    ];
+    const strict = extractClanGroups(players, { caseSensitive: false, maxEditDistance: 0, minSize: 2, requireExplicit: true });
+    if (Object.keys(strict).length !== 0) throw new Error('requireExplicit must drop bare-only bucket');
+    const lax = extractClanGroups(players, { caseSensitive: false, maxEditDistance: 0, minSize: 2 });
+    if (!lax.KM || lax.KM.length !== 2) throw new Error('default (audit/display) behavior must keep bare buckets');
   });
 
   await runTest('computePartySizes: ignoredTags ⇒ members treated as public (PART B)', async () => {

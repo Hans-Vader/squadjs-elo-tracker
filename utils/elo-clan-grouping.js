@@ -40,12 +40,23 @@
  *                                // captured prefix is normalized via
  *                                // NFD + the gamer-character map +
  *                                // non-alphanumeric strip + uppercase.
+ *       requireExplicit: boolean // default false; when true, buckets
+ *                                // whose members were ALL detected via
+ *                                // bare prefixes (strategies 4/5 sans
+ *                                // bracket) are dropped — at least one
+ *                                // member must carry an explicit tag
+ *                                // boundary (strategies 1-3 or a
+ *                                // leading open bracket).
  *     }
  *
  *   computePartySizes(players, options) -> Map<eosID, {partySize, clanTag}>
  *     Team-bound wrapper around extractClanGroups: groups same-tag
  *     players who share a teamID into a "party", one entry per
  *     eosID. Solo/no-tag players get {partySize:1, clanTag:null}.
+ *     Always passes requireExplicit: true — bare-prefix detections
+ *     (`KM Lookout`) only join a party when a teammate carries the
+ *     same tag with an explicit boundary (`[KM] Warlord`), so ordinary
+ *     two-word names (`The Rock` + `The Bull`) never form parties.
  *
  *     options = {
  *       caseSensitive: boolean    // default false
@@ -83,7 +94,16 @@ const NON_ASCII_MAP = {
   '₹': 'r', '₸': 't', '₿': 'b'
 };
 
-export function extractRawPrefix(name) {
+/**
+ * Internal detector: returns { raw, explicit } or null. `explicit` is true
+ * when the name carries a visible tag boundary (strategies 1–3, or a
+ * leading open bracket in strategy 5) — i.e. the prefix cannot be an
+ * ordinary two-word name. Strategies 4/5 without a bracket are `explicit:
+ * false`: `KM Lookout` and `The Rock` are syntactically identical, so
+ * such prefixes only count as clan tags when corroborated (see
+ * extractClanGroups' requireExplicit option).
+ */
+function detectPrefix(name) {
   if (!name) return null;
 
   // 1. Bracketed prefix; tolerates mismatched and exotic Unicode pairs.
@@ -92,35 +112,41 @@ export function extractRawPrefix(name) {
   //    in the closing class so `<TAG>` works too.
   const bracketRegex = /^\s*[\[\(【「『《╔├↾╬✦⟦╟|=<\{~\*](.+?)[\]\)】」』》╗┤↿╬✦⟧╢|=<>~\*\}]/;
   let match = name.match(bracketRegex);
-  if (match) return match[1].trim();
+  if (match) return { raw: match[1].trim(), explicit: true };
 
   // 2. Explicit separator: TAG // Name, TAG | Name, TAG - Name, etc.
   const sepRegex = /^\s*(.{1,10}?)\s*(?:\/\/|\||-|:|\:\(|\:\)|†|†|™|✯|~|\*)\s+/;
   match = name.match(sepRegex);
-  if (match) return match[1].trim();
+  if (match) return { raw: match[1].trim(), explicit: true };
 
   // 3. 2+ space separator (catches bare-prefix tags with a wide gap).
   const spaceRegex = /^\s*(.{1,10}?)\s{2,}/;
   match = name.match(spaceRegex);
-  if (match) return match[1].trim();
+  if (match) return { raw: match[1].trim(), explicit: true };
 
   // 4. Short ALL-CAPS tag + single space + uppercase continuation
-  //    (catches `KM Lookout`-style names — ASCII only).
+  //    (catches `KM Lookout`-style names — ASCII only). No visible
+  //    boundary marker ⇒ never explicit.
   const shortTagRegex = /^\s*([A-Z0-9]{2,4})\s+[A-Z]/;
   match = name.match(shortTagRegex);
-  if (match) return match[1].trim();
+  if (match) return { raw: match[1].trim(), explicit: false };
 
   // 5. Bare-prefix fallback: 2–7 non-bracket non-whitespace chars
   //    followed by whitespace and a non-empty token. Catches Unicode
   //    bare prefixes (`KΛZ Korven`, `♣ΛCE Wurstwasser`), mixed-case
   //    bare prefixes (`RmdV Habicht`), and open-only brackets
   //    (`[OPN Player`). The trailing \S guard prevents matching names
-  //    with no visible boundary (`ABCJohnSmith`).
+  //    with no visible boundary (`ABCJohnSmith`). A leading open
+  //    bracket is a visible marker ⇒ explicit; otherwise bare.
   const bareRegex = /^[\[<({]?([^\s\[\](){}<>]{2,7})\s+\S/u;
   match = name.match(bareRegex);
-  if (match) return match[1].trim();
+  if (match) return { raw: match[1].trim(), explicit: /^\s*[\[<({]/.test(name) };
 
   return null;
+}
+
+export function extractRawPrefix(name) {
+  return detectPrefix(name)?.raw ?? null;
 }
 
 export function normalizeTag(raw) {
@@ -169,16 +195,19 @@ export function extractClanGroups(rawPlayers, options = {}) {
   const maxSize = options.maxSize ?? 18;
   const maxEditDistance = options.maxEditDistance ?? 1;
   const caseSensitive = options.caseSensitive ?? true;
+  const requireExplicit = options.requireExplicit ?? false;
 
   const groups = {};
+  const explicitKeys = new Set();
   for (const player of rawPlayers || []) {
     if (!player?.name || !player?.eosID) continue;
-    const raw = extractRawPrefix(player.name);
-    if (!raw) continue;
-    const key = caseSensitive ? raw : normalizeTag(raw);
+    const det = detectPrefix(player.name);
+    if (!det) continue;
+    const key = caseSensitive ? det.raw : normalizeTag(det.raw);
     if (!key) continue;
     if (!groups[key]) groups[key] = new Set();
     groups[key].add(player.eosID);
+    if (det.explicit) explicitKeys.add(key);
   }
 
   for (const tag of Object.keys(groups)) {
@@ -203,6 +232,7 @@ export function extractClanGroups(rawPlayers, options = {}) {
                 seen.add(id);
               }
             }
+            if (explicitKeys.has(absorb)) explicitKeys.add(keep);
             delete groups[absorb];
             merged = true;
           }
@@ -213,6 +243,11 @@ export function extractClanGroups(rawPlayers, options = {}) {
 
   for (const tag of Object.keys(groups)) {
     if (groups[tag].length < minSize || groups[tag].length > maxSize) {
+      delete groups[tag];
+    } else if (requireExplicit && !explicitKeys.has(tag)) {
+      // Bucket built solely from bare prefixes (strategies 4/5 without a
+      // bracket): indistinguishable from ordinary two-word names, so it
+      // needs at least one explicitly-marked member to count as a clan.
       delete groups[tag];
     }
   }
@@ -250,8 +285,13 @@ export function computePartySizes(players, options = {}) {
   }
 
   for (const teamPlayers of byTeam.values()) {
+    // requireExplicit: rating-relevant path — a bare-prefix pair like
+    // `The Rock` + `The Bull` must never form a phantom party. A missed
+    // party is the neutral default (solo); a phantom party pollutes the
+    // match log permanently.
     const groups = extractClanGroups(teamPlayers, {
-      minSize: 2, caseSensitive, maxEditDistance, maxSize: Infinity
+      minSize: 2, caseSensitive, maxEditDistance, maxSize: Infinity,
+      requireExplicit: true
     });
     for (const [tag, members] of Object.entries(groups)) {
       if (ignore.has(normalizeTag(tag))) continue; // ignored ⇒ leave members public

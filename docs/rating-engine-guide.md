@@ -161,7 +161,7 @@ All options live in the EloTracker plugin block. Values shown are the exact defa
 | `quitParticipationThreshold` | `0.5` | Players with `participationRatio` below this **and** absent past the grace window are flagged as quitters. |
 | `enableQuitPenalty` | `false` | If true, detected quitters feed the quit factor into the engine. **Quit flags are recorded to DB/log regardless.** Calibrate `quitParams` first. |
 | `partyCaseSensitive` | `false` | Clan-tag matching for the party factor is case-sensitive (no normalization). Default `false` = normalized (case/homoglyph-insensitive). |
-| `partyMaxEditDistance` | `1` | Levenshtein distance for merging near-identical clan tags. **Caution:** distance 1 can also merge similar-but-*different* tags, and bare two-word names can false-positive as tags — audit with `tools/elo-clans-audit.js` and set `0` for exact-only matching. |
+| `partyMaxEditDistance` | `1` | Levenshtein distance for merging near-identical clan tags. **Caution:** distance 1 can also merge similar-but-*different* tags — audit with `tools/elo-clans-audit.js` and set `0` for exact-only matching. Bare two-word names (`The Rock`) cannot form parties: a bare prefix only counts when a teammate carries the same tag with an explicit boundary (`[TAG]`, `TAG \| Name`, …). |
 | `partyIgnoredTags` | `[]` | Clan tags treated as public (community tags, not real clans); matched normalized. |
 
 > **Not configurable (hard-coded in code, listed for reference):** tier cutoffs `visitorMaxGames:3`, `provisionalMaxGames:9`, `regularMinGames:10`; balance flags `troublingDelta:1.5`, `criticalDelta:3.0`, `imbalanceRatio:1.5`; the `SIGMA_MULTIPLIER = 3.0`; DB prune windows (30 days provisional / 90 days calibrated).
