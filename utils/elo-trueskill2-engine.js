@@ -33,12 +33,21 @@ import { partyOffsetAt } from './elo-parameters.js';
  * @param {Object} perPlayerMeta  eosID → { partySize, clanTag, kills, deaths,
  *                                quit, experience, timePlayedMin } (all optional)
  * @param {Object} parameters     frozen object from elo-parameters.js
+ * @param {Object} [options]
+ *   scaleTeamDeltaByRatio {boolean} default true — apply each player's
+ *   participationRatio to the TEAM factor's delta inside the engine (partial
+ *   play). The quit, kill/death and experience contributions are per-event or
+ *   already time-normalized and enter UNSCALED — the old caller-side blanket
+ *   scaling diluted them and inverted the quit-penalty gradient (an earlier
+ *   quit got a milder penalty). The legacy computeTeamUpdate facade passes
+ *   false to keep its raw-delta contract.
  *
  * @returns {{ team1Updates, team2Updates, debug? }}
- *   Updates use the legacy convention: caller scales by participationRatio,
- *   then newMu = mu + deltaMu and newSigma = sigma − deltaSigma.
+ *   Updates are FINAL: newMu = mu + deltaMu and newSigma = sigma − deltaSigma
+ *   (callers floor sigma). No caller-side participation scaling.
  */
-export function computeRoundUpdate(team1, team2, outcome, perPlayerMeta, parameters) {
+export function computeRoundUpdate(team1, team2, outcome, perPlayerMeta, parameters, options = {}) {
+  const scaleTeamDeltaByRatio = options.scaleTeamDeltaByRatio ?? true;
   // Party-offset factor (eq. 7): per-player performance-mean shift by clan-tag
   // party size. partyOffsets[0] (solo) is pinned to 0, so partySize=1 yields no
   // shift. Ratio-weighting and slot-scaling happen inside teamFactorMessages.
@@ -124,9 +133,24 @@ export function computeRoundUpdate(team1, team2, outcome, perPlayerMeta, paramet
     const newSigma = Math.sqrt(sigma * sigma + tau * tau);
     const newMu = mu + experienceShift(player);
 
+    let deltaMu = newMu - player.mu;
+    let deltaSigma = player.sigma - newSigma;
+
+    // Partial play: scale ONLY the team factor's contribution by the played
+    // fraction (legacy convention, bit-exact on the team-only path). The
+    // remaining contributions (quit, kill/death, experience) are per-event or
+    // already time-normalized and stay unscaled.
+    const ratio = player.participationRatio ?? 1;
+    if (scaleTeamDeltaByRatio && ratio !== 1) {
+      const teamOnly = toMuSigma(combineMessages(prior, [teamMessage]));
+      const teamSigma = Math.sqrt(teamOnly.sigma * teamOnly.sigma + tau * tau);
+      deltaMu = (teamOnly.mu - player.mu) * ratio + (newMu - teamOnly.mu);
+      deltaSigma = (player.sigma - teamSigma) * ratio + (teamSigma - newSigma);
+    }
+
     return {
-      deltaMu: newMu - player.mu,
-      deltaSigma: player.sigma - newSigma,
+      deltaMu,
+      deltaSigma,
       vVal: teamMessage.vVal ?? 0,
       wVal: teamMessage.wVal ?? 0
     };

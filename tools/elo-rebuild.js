@@ -6,11 +6,18 @@
  * (utils/elo-trueskill2-engine.js). Outputs a restore-compatible JSON backup.
  *
  * Usage:
- *   node elo-rebuild.js <matchlog.jsonl> <backup.json> [output.json] [--apply-quit-penalty] [--party-case-sensitive] [--party-max-edit-distance=N] [--ignore-tags=A,B]
+ *   node elo-rebuild.js <matchlog.jsonl> <backup.json> [output.json] [--params=params.json] [--apply-quit-penalty] [--party-case-sensitive] [--party-max-edit-distance=N] [--ignore-tags=A,B]
  *
  * - matchlog.jsonl  Source of truth for all match outcomes + participants
  * - backup.json     Existing backup — used only to preserve steamID/discordID
  * - output.json     Output path (default: elo-rebuilt-<timestamp>.json)
+ * - --params=params.json  trueskill2 parameter overrides for the replay.
+ *                   Accepts the bare block ({ "beta": 7.5, ... }) or a full
+ *                   plugin-options snippet ({ "trueskill2": {...} }) — the
+ *                   calibrator's "paste into config" output works verbatim.
+ *                   MUST mirror the live plugin's trueskill2 config, else
+ *                   the rebuilt ratings diverge from live scoring. Default:
+ *                   neutral parameters (classic TrueSkill).
  * - --apply-quit-penalty  Apply the TrueSkill2 quit factor to quit-flagged
  *                   log entries (default off, mirroring the plugin's
  *                   enableQuitPenalty default)
@@ -180,16 +187,14 @@ export async function rebuildFromLog(matchlogPath, backupPath = null, paramOverr
     const isTeam1Winner = match.outcome === 'team1win';
     const isTeam2Winner = match.outcome === 'team2win';
 
-    // Apply scaled updates
+    // Apply updates (participation scaling happens inside the engine)
     const applyUpdates = (matchPlayers, updates, isWinner, isLoser) => {
       matchPlayers.forEach((mp, i) => {
         const state = players.get(mp.eosID);
         const { deltaMu, deltaSigma } = updates[i];
-        const scaled_dMu    = deltaMu    * mp.participationRatio;
-        const scaled_dSigma = deltaSigma * mp.participationRatio;
 
-        state.mu           = state.mu + scaled_dMu;
-        state.sigma        = Math.max(state.sigma - scaled_dSigma, 0.5);
+        state.mu           = state.mu + deltaMu;
+        state.sigma        = Math.max(state.sigma - deltaSigma, 0.5);
         state.roundsPlayed += 1;
         state.wins         += isWinner ? 1 : 0;
         state.losses       += isLoser  ? 1 : 0;
@@ -226,24 +231,46 @@ async function main() {
   const partyMaxEditDistance = edArg ? parseEditDistance(edArg.split('=')[1]) : 0;
   const igArg = process.argv.find(a => a.startsWith('--ignore-tags='));
   const partyIgnoredTags = igArg ? igArg.split('=')[1].split(',').map(s => s.trim()).filter(Boolean) : [];
+
+  // --params=<file>: the live trueskill2 parameter overrides, so the replay
+  // scores exactly like a calibrated production plugin. Accepts either the
+  // bare trueskill2 block or a full plugin-options snippet containing one
+  // (i.e. the calibrator's "paste into config" output works verbatim).
+  // Validation happens in loadParameters — invalid values abort loudly.
+  const paramsArg = process.argv.find(a => a.startsWith('--params='));
+  let paramOverrides = {};
+  if (paramsArg) {
+    const paramsPath = paramsArg.split('=')[1];
+    try {
+      paramOverrides = JSON.parse(fs.readFileSync(paramsPath, 'utf8'));
+    } catch (err) {
+      console.error(`Cannot read --params file "${paramsPath}": ${err.message}`);
+      process.exit(1);
+    }
+    if (paramOverrides && typeof paramOverrides === 'object' && paramOverrides.trueskill2) {
+      paramOverrides = paramOverrides.trueskill2;
+    }
+  }
+
   const args = process.argv.slice(2).filter(a =>
     a !== '--apply-quit-penalty' &&
     a !== '--party-case-sensitive' &&
     !a.startsWith('--party-max-edit-distance=') &&
-    !a.startsWith('--ignore-tags='));
+    !a.startsWith('--ignore-tags=') &&
+    !a.startsWith('--params='));
   const matchlogPath = args[0];
   const backupPath = args[1];
   const outputArg = args[2];
 
   if (!matchlogPath || !backupPath) {
-    console.error('Usage: node elo-rebuild.js <matchlog.jsonl> <backup.json> [output.json] [--apply-quit-penalty] [--party-case-sensitive] [--party-max-edit-distance=N] [--ignore-tags=A,B]');
+    console.error('Usage: node elo-rebuild.js <matchlog.jsonl> <backup.json> [output.json] [--params=params.json] [--apply-quit-penalty] [--party-case-sensitive] [--party-max-edit-distance=N] [--ignore-tags=A,B]');
     process.exit(1);
   }
 
   const outputPath = outputArg ?? `elo-rebuilt-${Date.now()}.json`;
 
   const { players, parameters, processed, skipped } = await rebuildFromLog(
-    matchlogPath, backupPath, {}, {
+    matchlogPath, backupPath, paramOverrides, {
       applyQuitPenalty,
       quiet: false,
       partyOptions: { caseSensitive: partyCaseSensitive, maxEditDistance: partyMaxEditDistance, ignoredTags: partyIgnoredTags }

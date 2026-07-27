@@ -67,11 +67,11 @@ Ratings are computed **once per round, at round end.** Here is the actual per-ro
    - no eligible participants, or one team has zero eligible participants.
 6. **Team assembly** — the winner/loser and ticket difference are read from the round-end data (outcome = `team1win` / `team2win` / `draw`). Participants are filtered to those whose `participationRatio >= minParticipationRatio`, then split into team 1 and team 2 by their assigned team ID.
 7. **Meta build** — quitters are detected (see [§4](#4-the-four-trueskill2-factors) and [§5](#5-configuration-reference)); per-player metadata (squad size/ID, kills, deaths, quit flag, experience, time played) is assembled.
-8. **Engine call** — `computeRoundUpdate(team1, team2, outcome, perPlayerMeta, params)` runs the TrueSkill2 update inside a **try/catch**. The engine computes each factor's message from the player's prior, combines them in one Expectation-Propagation pass, applies the `tau` drift, and applies the experience mean-shift. If the engine throws (the factor library throws by design on unstable messages), the **entire round is skipped** and ratings are left untouched.
-9. **Apply updates** — for each player the raw deltas are scaled by their `participationRatio`:
+8. **Engine call** — `computeRoundUpdate(team1, team2, outcome, perPlayerMeta, params)` runs the TrueSkill2 update inside a **try/catch**. The engine computes each factor's message from the player's prior, combines them in one Expectation-Propagation pass, applies the `tau` drift, and applies the experience mean-shift. Partial play is handled **inside the engine**: only the *team factor's* delta is scaled by the player's `participationRatio` — the quit, kill/death and experience contributions are per-event or already time-normalized and enter at full weight (a blanket scaling would dilute them; for the quit penalty it would even invert the deterrent: quitting *earlier* would be punished *milder*). If the engine throws (the factor library throws by design on unstable messages), the **entire round is skipped** and ratings are left untouched.
+9. **Apply updates** — the engine's deltas are final and applied directly:
    ```
-   newMu    = rating.mu    + deltaMu    * participationRatio
-   newSigma = max(rating.sigma - deltaSigma * participationRatio, 0.5)
+   newMu    = rating.mu    + deltaMu
+   newSigma = max(rating.sigma - deltaSigma, 0.5)
    ```
    (Note σ is *reduced* by a subtraction, and hard-floored at 0.5.)
 10. **Persist** — player stats are written (μ/σ overwritten; wins/losses/roundsPlayed **incremented** by 1), a round-history row is inserted, and a full per-round record is appended to the JSONL match log (`eloLogPath`). The rating cache is snapshotted and cleared.
@@ -168,7 +168,7 @@ All options live in the EloTracker plugin block. Values shown are the exact defa
 
 ### (b) The `trueskill2` parameter block
 
-`trueskill2: {}` (empty) → all neutral defaults below → **engine is identical to classic TrueSkill.** Overrides are merged element-wise onto these defaults (arrays keep their canonical length; unknown keys and null/undefined are ignored; `partyOffsets[0]` is always forced to 0).
+`trueskill2: {}` (empty) → all neutral defaults below → **engine is identical to classic TrueSkill.** Overrides are merged element-wise onto these defaults (arrays keep their canonical length; unknown keys and null/undefined are ignored; `partyOffsets[0]` is always forced to 0). The merged result is **validated at load**: out-of-range or non-numeric values (`drawProbability: 1`, `beta: "7,5"`, a positive `quitParams.mQ`, `NaN`/`Infinity` anywhere) throw immediately with an `Invalid trueskill2 config: …` error — the plugin refuses to mount rather than silently computing `Infinity` ratings. As a second line of defense, a round whose computed deltas are non-finite is skipped and nothing is persisted.
 
 > **Placement matters:** the party *detection* options (`partyCaseSensitive`, `partyMaxEditDistance`, `partyIgnoredTags`) are **top-level plugin options** (§5(a)), NOT part of this block — placed here they are silently ignored. Likewise, the pre-rename key `squadOffsets` is no longer recognized: it is silently dropped, so a previously calibrated config must rename it to `partyOffsets`.
 
@@ -269,6 +269,7 @@ node tools/elo-rebuild.js <matchlog.jsonl> <backup.json> [output.json] [--apply-
 - **arg 1** `matchlog.jsonl` (required) — the authoritative source of outcomes + participants.
 - **arg 2** `backup.json` (required) — an existing backup, used **only** to carry `steamID`/`discordID` across by `eosID`.
 - **arg 3** `output.json` (optional) — where the rebuilt, restore-compatible backup is written. Default: `elo-rebuilt-<timestamp>.json` in the current directory (run from a known directory or pass an explicit path).
+- **`--params=params.json`** — the `trueskill2` parameter overrides for the replay, so a calibrated deployment rebuilds with the SAME parameters live scoring uses. The file may contain the bare block (`{ "beta": 7.5, ... }`) or a full plugin-options snippet (`{ "trueskill2": {...} }`) — the calibrator's "paste into config" output works verbatim. Values are validated like the plugin config; invalid values abort with `Invalid trueskill2 config: …`. Default: neutral parameters.
 - **`--apply-quit-penalty`** — apply the quit factor during replay. Use this **only if** your live plugin has `enableQuitPenalty: true`, so the offline rebuild matches live behaviour. Default (off) mirrors the plugin default.
 
 The tool replays every match chronologically through the engine, starting every player from the μ₀/√v₀ prior, then prints a Done/Processed/Skipped summary. Load the produced `output.json` into the live DB with:
@@ -279,7 +280,7 @@ The tool replays every match chronologically through the engine, starting every 
 !elo restore
 ```
 
-> **Important limitation:** the CLI always replays with **neutral** parameters — it cannot take a calibrated `beta`/`tau` from the command line. To rebuild with your calibrated parameters you must import the exported `rebuildFromLog(matchlogPath, backupPath, paramOverrides, options)` function from `utils/elo-rebuild.js` in your own script and pass the overrides in code.
+> **Calibrated rebuilds:** pass your live `trueskill2` block via `--params=params.json` (see above) — without it the replay uses neutral parameters and diverges from a calibrated live deployment. For programmatic use, the exported `rebuildFromLog(matchlogPath, backupPath, paramOverrides, options)` function from `tools/elo-rebuild.js` accepts the same overrides in code.
 
 ---
 
@@ -301,6 +302,7 @@ The tool replays every match chronologically through the engine, starting every 
 
 - **"Nothing changed after I set party/kill/experience values."** Every TrueSkill2 feature is off by default. Party/experience/kill/death effects require calibrating and pasting values into the `trueskill2` block. `killParams.wPlayer`/`deathParams.wPlayer` of 0 makes those factors *identically zero* regardless of variance.
 - **Quit penalty isn't applying.** It's double-gated: `quitParams.mQ` has no effect unless `enableQuitPenalty: true`. Detection (recorded to DB/log) happens regardless; only the engine-facing quit flag is gated. And calibrate `quitParams` first — the default `mQ = -2.083` is a *large* penalty (~−4.7 μ per quit).
+- **Plugin won't mount, error `Invalid trueskill2 config: …`.** Intentional fail-fast: one of your `trueskill2` values is out of range or not a number (the message names the key, the value, and the rule). Typical causes: `drawProbability: 1` meant as "1%" (write `0.01`), a decimal comma (`"7,5"` → write `7.5`), a flipped sign on `quitParams.mQ`. Fix the value in config.json; do not delete the whole block.
 - **False quitter flags.** SquadJS has **no reliable disconnect event** (`PLAYER_DISCONNECTED` never fires); departure is inferred from ~30s polling, so a crash is indistinguishable from a rage-quit. Keep `quitGraceSeconds` ≥ ~60s (≥ 2 poll cycles).
 - **`tauPerMinute` does nothing.** It exists in the defaults but the engine never reads it. Use `tau` for drift.
 - **Rounds are silently skipped.** A round mutates no ratings (and posts a skip embed) if: the plugin isn't ready, player count < `minPlayersForElo`, the gamemode/layer is ignored or unknown, there are zero eligible participants, or one team has no eligible participants.

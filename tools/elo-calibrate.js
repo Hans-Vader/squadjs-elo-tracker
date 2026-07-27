@@ -22,20 +22,11 @@
 
 import readline from 'readline';
 import fs from 'fs';
+import { fileURLToPath } from 'url';
 import EloCalculator from '../utils/elo-calculator.js';
 import { computeRoundUpdate } from '../utils/elo-trueskill2-engine.js';
 import { loadParameters, partyOffsetAt } from '../utils/elo-parameters.js';
 import { computePartySizes } from '../utils/elo-clan-grouping.js';
-
-// Flags may appear anywhere; positionals are everything that is not a flag.
-const positionals = process.argv.slice(2).filter(a => !a.startsWith('--'));
-const jsonlPath = positionals[0];
-const dbPath    = positionals[1];
-
-if (!jsonlPath || !dbPath) {
-  console.error('Usage: node elo-calibrate.js <matchlog.jsonl> <db-backup.json> [--party-case-sensitive] [--party-max-edit-distance=N] [--ignore-tags=A,B]');
-  process.exit(1);
-}
 
 // Reject malformed values instead of letting NaN silently disable merging.
 function parseEditDistance(raw) {
@@ -47,17 +38,6 @@ function parseEditDistance(raw) {
   return n;
 }
 
-const PARTY_OPTIONS = {
-  caseSensitive: process.argv.includes('--party-case-sensitive'),
-  maxEditDistance: (() => {
-    const a = process.argv.find(x => x.startsWith('--party-max-edit-distance='));
-    return a ? parseEditDistance(a.split('=')[1]) : 0;
-  })(),
-  ignoredTags: (() => {
-    const a = process.argv.find(x => x.startsWith('--ignore-tags='));
-    return a ? a.split('=')[1].split(',').map(s => s.trim()).filter(Boolean) : [];
-  })()
-};
 
 // --- Constants ---
 const RATED_MIN_GAMES    = 5;
@@ -80,45 +60,42 @@ const TAU_STEP  = 0.02;  // coarser too — same reason
 const CALIBRATION_LAMBDA  = 200;
 const CALIBRATION_EPSILON = 1e-6;
 
-// --- Load DB synchronously ---
-const db = JSON.parse(fs.readFileSync(dbPath));
+// Player DB backup (eosID → player row); filled by main() before the replay.
 const playerDB = new Map();
-for (const p of db.players) playerDB.set(p.eosID, p);
 
-// --- Stream and parse match log ---
-const matches = [];
-
-const rl = readline.createInterface({
-  input: fs.createReadStream(jsonlPath),
-  crlfDelay: Infinity
-});
-
-rl.on('line', (line) => {
-  line = line.trim();
-  if (!line) return;
+/**
+ * Parse one JSONL match-log line into the calibrator's match shape, or null
+ * if the line is unusable (blank, malformed, draw, one-sided). Exported for
+ * testing. roundDuration MUST survive — the engine gates the kill/death
+ * factor on timePlayedMin > 0, so dropping it silently disables that factor
+ * in every calibration replay.
+ */
+export function parseMatchLine(line, partyOptions) {
+  line = (line ?? '').trim();
+  if (!line) return null;
 
   let match;
   try { match = JSON.parse(line); }
-  catch { return; }
+  catch { return null; }
 
-  const { players, outcome, endedAt, matchId } = match;
+  const { players, outcome, endedAt, matchId, roundDuration } = match;
 
-  if (!players || !outcome || outcome === 'draw') return;
+  if (!players || !outcome || outcome === 'draw') return null;
   const team1 = players.filter(p => p.teamID === 1);
   const team2 = players.filter(p => p.teamID === 2);
-  if (!team1.length || !team2.length) return;
+  if (!team1.length || !team2.length) return null;
 
-  const parsedMatch = { matchId, endedAt, outcome, players, team1, team2 };
+  const parsedMatch = { matchId, endedAt, outcome, roundDuration, players, team1, team2 };
   // Name-based fallback grouping is only needed for pre-feature records; if
   // every player carries the live-logged partySize, skip the recompute.
   parsedMatch.partyByEos = players.some(pl => pl.partySize == null)
     ? computePartySizes(
         players.map(pl => ({ eosID: pl.eosID, name: pl.name, teamID: pl.teamID })),
-        PARTY_OPTIONS
+        partyOptions
       )
     : null;
-  matches.push(parsedMatch);
-});
+  return parsedMatch;
+}
 
 // --- Win probability ---
 // `parameters` is a loadParameters() object; partyOffsets shift the predicted
@@ -174,8 +151,17 @@ function replayMatches(matches, overrides = {}, options = {}) {
   for (const match of matches) {
     const { matchId, outcome, weight, team1, team2 } = match;
 
-    const t1ratings = team1.map(p => ({ eosID: p.eosID, mu: getRating(p.eosID).mu, sigma: getRating(p.eosID).sigma }));
-    const t2ratings = team2.map(p => ({ eosID: p.eosID, mu: getRating(p.eosID).mu, sigma: getRating(p.eosID).sigma }));
+    // participationRatio must reach the engine: it weights the team aggregates
+    // AND scales the team-factor delta internally (mirrors the live plugin).
+    const ratioByEos = new Map(match.players.map(p => [p.eosID, p.participationRatio ?? 1]));
+    const toRating = p => ({
+      eosID: p.eosID,
+      mu: getRating(p.eosID).mu,
+      sigma: getRating(p.eosID).sigma,
+      participationRatio: ratioByEos.get(p.eosID) ?? 1
+    });
+    const t1ratings = team1.map(toRating);
+    const t2ratings = team2.map(toRating);
 
     // TrueSkill2 observations from the log (absent on pre-upgrade records —
     // the corresponding factors stay inert for those rounds).
@@ -201,13 +187,12 @@ function replayMatches(matches, overrides = {}, options = {}) {
 
     const { team1Updates, team2Updates } = computeRoundUpdate(t1ratings, t2ratings, outcome, perPlayerMeta, parameters);
 
+    // Participation scaling happens inside the engine (team factor only).
     const applyUpdates = (players, updates) => {
       for (let i = 0; i < players.length; i++) {
-        const matchPlayer = match.players.find(p => p.eosID === players[i].eosID);
-        const ratio       = matchPlayer?.participationRatio ?? 1;
         const rating      = getRating(players[i].eosID);
-        rating.mu        += updates[i].deltaMu    * ratio;
-        rating.sigma      = Math.max(rating.sigma - updates[i].deltaSigma * ratio, 0.5);
+        rating.mu        += updates[i].deltaMu;
+        rating.sigma      = Math.max(rating.sigma - updates[i].deltaSigma, 0.5);
         rating.roundsPlayed += 1;
       }
     };
@@ -372,8 +357,8 @@ function diagBuckets(games, label) {
   console.log(`Avg predicted P(team1): ${avgP}\n`);
 }
 
-// --- Main ---
-rl.on('close', () => {
+// --- Calibration pipeline (runs once the CLI has parsed the whole log) ---
+function runCalibration(matches) {
   matches.sort((a, b) => a.endedAt - b.endedAt);
 
   for (const match of matches) {
@@ -468,4 +453,47 @@ rl.on('close', () => {
   if (best.mQ === 0 && best.e0 === 0 && best.s4 === 0) {
     console.log('(All TrueSkill2 factors calibrate to OFF on this log — keep neutral defaults.)');
   }
-});
+}
+
+// --- CLI ---
+function main() {
+  // Flags may appear anywhere; positionals are everything that is not a flag.
+  const positionals = process.argv.slice(2).filter(a => !a.startsWith('--'));
+  const jsonlPath = positionals[0];
+  const dbPath    = positionals[1];
+
+  if (!jsonlPath || !dbPath) {
+    console.error('Usage: node elo-calibrate.js <matchlog.jsonl> <db-backup.json> [--party-case-sensitive] [--party-max-edit-distance=N] [--ignore-tags=A,B]');
+    process.exit(1);
+  }
+
+  const partyOptions = {
+    caseSensitive: process.argv.includes('--party-case-sensitive'),
+    maxEditDistance: (() => {
+      const a = process.argv.find(x => x.startsWith('--party-max-edit-distance='));
+      return a ? parseEditDistance(a.split('=')[1]) : 0;
+    })(),
+    ignoredTags: (() => {
+      const a = process.argv.find(x => x.startsWith('--ignore-tags='));
+      return a ? a.split('=')[1].split(',').map(s => s.trim()).filter(Boolean) : [];
+    })()
+  };
+
+  const db = JSON.parse(fs.readFileSync(dbPath));
+  for (const p of db.players) playerDB.set(p.eosID, p);
+
+  const matches = [];
+  const rl = readline.createInterface({
+    input: fs.createReadStream(jsonlPath),
+    crlfDelay: Infinity
+  });
+  rl.on('line', (line) => {
+    const m = parseMatchLine(line, partyOptions);
+    if (m) matches.push(m);
+  });
+  rl.on('close', () => runCalibration(matches));
+}
+
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  main();
+}

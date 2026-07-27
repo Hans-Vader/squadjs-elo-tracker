@@ -1,4 +1,7 @@
 import path from 'path';
+import fs from 'fs';
+import os from 'os';
+import { execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { rebuildFromLog } from '../tools/elo-rebuild.js';
 import EloCalculator from '../utils/elo-calculator.js';
@@ -6,6 +9,7 @@ import EloCalculator from '../utils/elo-calculator.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const LOG = path.join(__dirname, 'fixtures/rebuild-sample.jsonl');
 const BACKUP = path.join(__dirname, 'fixtures/rebuild-backup.json');
+const CLI = path.join(__dirname, '../tools/elo-rebuild.js');
 
 export default async function runRebuildTests(runTest) {
   await runTest('Rebuild: replays the fixture and produces sane, ordered ratings', async () => {
@@ -161,6 +165,45 @@ export default async function runRebuildTests(runTest) {
           throw new Error(`pre-feature record (${id}) must replay identically regardless of record 1: ${a} vs ${b}`);
         }
       }
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  await runTest('Rebuild CLI: --params file drives the engine parameters', async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'elo-rebuild-params-'));
+    try {
+      const paramsFile = path.join(tmpDir, 'params.json');
+      // Accepts the plugin-options shape ({ trueskill2: {...} }) as pasted
+      // from the calibrator output.
+      fs.writeFileSync(paramsFile, JSON.stringify({ trueskill2: { beta: 12 } }));
+      const outFile = path.join(tmpDir, 'out.json');
+      execFileSync(process.execPath, [CLI, LOG, BACKUP, outFile, `--params=${paramsFile}`], { stdio: 'pipe' });
+      const out = JSON.parse(fs.readFileSync(outFile, 'utf8'));
+      if (out.params.BETA !== 12) {
+        throw new Error(`output must echo the loaded beta 12, got ${out.params.BETA} — --params ignored`);
+      }
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  await runTest('Rebuild CLI: invalid --params fails fast with the validation error', async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'elo-rebuild-badparams-'));
+    try {
+      const paramsFile = path.join(tmpDir, 'params.json');
+      fs.writeFileSync(paramsFile, JSON.stringify({ trueskill2: { drawProbability: 1 } }));
+      let failed = false;
+      try {
+        execFileSync(process.execPath, [CLI, LOG, BACKUP, path.join(tmpDir, 'out.json'), `--params=${paramsFile}`], { stdio: 'pipe' });
+      } catch (err) {
+        failed = true;
+        const stderr = err.stderr?.toString() ?? '';
+        if (!stderr.includes('Invalid trueskill2 config')) {
+          throw new Error(`expected the validation message on stderr, got: ${stderr.slice(0, 200)}`);
+        }
+      }
+      if (!failed) throw new Error('invalid --params must exit non-zero, not silently replay with defaults');
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

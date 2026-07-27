@@ -35,9 +35,9 @@ node elo-inspect.js <rebuilt.json> [old-backup.json] [matchlog.jsonl]
 ```
 
 **`elo-rebuild.js`**
-Replays all recorded matches from scratch through the TrueSkill2 engine. Outputs a restore-compatible JSON backup. Useful after formula corrections. Pre-upgrade log records (no kill/party/quit fields) replay with those factors inert; `--apply-quit-penalty` applies the quit factor to quit-flagged records (default off, mirroring the plugin).
+Replays all recorded matches from scratch through the TrueSkill2 engine. Outputs a restore-compatible JSON backup. Useful after formula corrections. Pre-upgrade log records (no kill/party/quit fields) replay with those factors inert; `--apply-quit-penalty` applies the quit factor to quit-flagged records (default off, mirroring the plugin). `--params=params.json` feeds the live `trueskill2` overrides into the replay (the calibrator's "paste into config" output works verbatim) — required for parity with a calibrated deployment.
 ```
-node elo-rebuild.js <matchlog.jsonl> <backup.json> [output.json] [--apply-quit-penalty] [--party-case-sensitive] [--party-max-edit-distance=N] [--ignore-tags=A,B]
+node elo-rebuild.js <matchlog.jsonl> <backup.json> [output.json] [--params=params.json] [--apply-quit-penalty] [--party-case-sensitive] [--party-max-edit-distance=N] [--ignore-tags=A,B]
 ```
 
 **`merge-match-logs.js`**

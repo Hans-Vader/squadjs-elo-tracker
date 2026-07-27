@@ -112,11 +112,55 @@ export function partyOffsetAt(offsets, size) {
 }
 
 /**
+ * Range/type validation for a merged parameter object. The `trueskill2`
+ * config block is hand-edited JSON (SquadJS config.json) — typos like
+ * `drawProbability: 1` (⇒ erfInv(1) = Infinity) or a German decimal-comma
+ * string `"7,5"` compute to Infinity/NaN WITHOUT throwing and would be
+ * silently persisted as ratings every round. Fail fast at load instead.
+ */
+function validateParameters(params) {
+  const fin = (v) => typeof v === 'number' && Number.isFinite(v);
+  const fail = (key, value, rule) => {
+    throw new Error(`Invalid trueskill2 config: ${key} = ${JSON.stringify(value)} — ${rule}`);
+  };
+
+  if (!fin(params.mu0)) fail('mu0', params.mu0, 'must be a finite number');
+  if (!fin(params.v0) || !(params.v0 > 0)) fail('v0', params.v0, 'must be a finite number > 0');
+  if (!fin(params.beta) || !(params.beta > 0)) fail('beta', params.beta, 'must be a finite number > 0');
+  if (!fin(params.tau) || params.tau < 0) fail('tau', params.tau, 'must be a finite number >= 0');
+  if (!fin(params.tauPerMinute) || params.tauPerMinute < 0) {
+    fail('tauPerMinute', params.tauPerMinute, 'must be a finite number >= 0');
+  }
+  if (!fin(params.drawProbability) || params.drawProbability < 0 || params.drawProbability >= 1) {
+    fail('drawProbability', params.drawProbability, 'must be a number in [0, 1) — e.g. 0.01 for 1%');
+  }
+  for (const key of ['partyOffsets', 'experienceOffsets']) {
+    params[key].forEach((entry, i) => {
+      if (!fin(entry)) fail(`${key}[${i}]`, entry, 'must be a finite number');
+    });
+  }
+  for (const key of ['killParams', 'deathParams']) {
+    const o = params[key];
+    if (!fin(o.wPlayer)) fail(`${key}.wPlayer`, o.wPlayer, 'must be a finite number');
+    if (!fin(o.wOpponent)) fail(`${key}.wOpponent`, o.wOpponent, 'must be a finite number');
+    if (!fin(o.variance) || o.variance < 0) fail(`${key}.variance`, o.variance, 'must be a finite number >= 0');
+  }
+  if (!fin(params.quitParams.mQ) || params.quitParams.mQ > 0) {
+    fail('quitParams.mQ', params.quitParams.mQ, 'must be a finite number <= 0 (paper constraint; positive would reward quitting)');
+  }
+  if (!fin(params.quitParams.vQ) || !(params.quitParams.vQ > 0)) {
+    fail('quitParams.vQ', params.quitParams.vQ, 'must be a finite number > 0');
+  }
+}
+
+/**
  * Build a parameter object by merging user overrides onto the defaults.
  * - Arrays are merged element-wise and keep the canonical default length.
  * - Plain objects are shallow-merged (nested defaults survive partial overrides).
  * - `undefined`/`null` overrides are ignored.
  * - partyOffsets[0] is forced back to 0 (identifiability).
+ * - The merged result is validated (see validateParameters) — invalid values
+ *   throw here, at plugin mount / tool start, never mid-round.
  *
  * @param {Object} overrides
  * @returns {Object} deep-frozen parameter object
@@ -143,5 +187,6 @@ export function loadParameters(overrides = {}) {
     }
   }
   params.partyOffsets[0] = 0; // paper fixes offset(1) = 0
+  validateParameters(params);
   return deepFreeze(params);
 }

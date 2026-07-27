@@ -58,4 +58,68 @@ export default async function runParameterTests(runTest) {
     if ('squadOffsets' in p) throw new Error('params must not expose a squadOffsets key');
     if (p.partyOffsets[3] !== 0) throw new Error('legacy squadOffsets override must be ignored, not mapped');
   });
+
+  // ─── Validation: config typos must throw at load, not corrupt ratings ──
+
+  const mustThrow = (overrides, label) => {
+    try {
+      loadParameters(overrides);
+    } catch {
+      return;
+    }
+    throw new Error(`loadParameters must reject ${label}`);
+  };
+
+  await runTest('Validation: drawProbability must be a number in [0, 1)', async () => {
+    mustThrow({ drawProbability: 1 }, 'drawProbability = 1 (erfInv(1) = Infinity)');
+    mustThrow({ drawProbability: 1.5 }, 'drawProbability > 1');
+    mustThrow({ drawProbability: -0.1 }, 'negative drawProbability');
+    mustThrow({ drawProbability: '0,01' }, 'German decimal-comma string');
+    if (loadParameters({ drawProbability: 0.05 }).drawProbability !== 0.05) throw new Error('valid value must pass');
+  });
+
+  await runTest('Validation: beta must be finite > 0; tau/tauPerMinute finite >= 0', async () => {
+    mustThrow({ beta: 0 }, 'beta = 0');
+    mustThrow({ beta: -1 }, 'negative beta');
+    mustThrow({ beta: '7,5' }, 'beta as decimal-comma string');
+    mustThrow({ beta: Infinity }, 'infinite beta');
+    mustThrow({ beta: NaN }, 'NaN beta');
+    mustThrow({ tau: -0.1 }, 'negative tau');
+    mustThrow({ tauPerMinute: -1 }, 'negative tauPerMinute');
+    const p = loadParameters({ beta: 7.5, tau: 0 });
+    if (p.beta !== 7.5 || p.tau !== 0) throw new Error('valid beta/tau must pass');
+  });
+
+  await runTest('Validation: mu0 finite, v0 finite > 0', async () => {
+    mustThrow({ mu0: NaN }, 'NaN mu0');
+    mustThrow({ mu0: '25' }, 'mu0 as string');
+    mustThrow({ v0: 0 }, 'v0 = 0 (sigma 0 is unrepresentable)');
+    mustThrow({ v0: -4 }, 'negative v0');
+  });
+
+  await runTest('Validation: quitParams constraints (mQ <= 0, vQ > 0, finite)', async () => {
+    mustThrow({ quitParams: { mQ: 2 } }, 'positive mQ (sign flipped — would reward quitting)');
+    mustThrow({ quitParams: { mQ: '-2' } }, 'mQ as string');
+    mustThrow({ quitParams: { vQ: 0 } }, 'vQ = 0');
+    mustThrow({ quitParams: { vQ: -1 } }, 'negative vQ');
+    const p = loadParameters({ quitParams: { mQ: -3, vQ: 2 } });
+    if (p.quitParams.mQ !== -3 || p.quitParams.vQ !== 2) throw new Error('valid quitParams must pass');
+    if (loadParameters({ quitParams: { mQ: 0 } }).quitParams.mQ !== 0) throw new Error('mQ = 0 is allowed (paper: <= 0)');
+  });
+
+  await runTest('Validation: kill/death params finite; variance >= 0', async () => {
+    mustThrow({ killParams: { wPlayer: '0,3' } }, 'wPlayer as decimal-comma string');
+    mustThrow({ killParams: { variance: -1 } }, 'negative kill variance');
+    mustThrow({ deathParams: { wOpponent: NaN } }, 'NaN wOpponent');
+    const p = loadParameters({ killParams: { wPlayer: 0.3, wOpponent: -0.1 } });
+    if (p.killParams.wPlayer !== 0.3) throw new Error('valid killParams must pass');
+  });
+
+  await runTest('Validation: offset-table entries must be finite numbers', async () => {
+    mustThrow({ partyOffsets: [0, NaN] }, 'NaN partyOffset entry');
+    mustThrow({ partyOffsets: [0, '1,5'] }, 'string partyOffset entry');
+    mustThrow({ experienceOffsets: [Infinity] }, 'infinite experienceOffset entry');
+    const p = loadParameters({ partyOffsets: [0, 0, 0, 1.5] });
+    if (p.partyOffsets[3] !== 1.5) throw new Error('valid offsets must pass');
+  });
 }

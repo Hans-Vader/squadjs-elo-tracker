@@ -94,7 +94,8 @@ export default class EloCalculator {
       tau: this.TAU,
       drawProbability: this.DRAW_PROBABILITY
     });
-    return computeRoundUpdate(team1, team2, outcome, {}, parameters);
+    // Legacy contract: RAW deltas, caller scales by participationRatio.
+    return computeRoundUpdate(team1, team2, outcome, {}, parameters, { scaleTeamDeltaByRatio: false });
   }
 
   /**

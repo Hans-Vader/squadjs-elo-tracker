@@ -374,6 +374,102 @@ export default async function runTrackerTests(runTest) {
     if (rowP3.kills !== 0 || rowP3.deaths !== 0) throw new Error('players without events default to 0 kills/deaths');
   });
 
+  await runTest('Match log: params reflect the live config; deltas are the applied values', async () => {
+    const server = createMockServer();
+    const tracker = new EloTracker(
+      server,
+      { ...mockOptions, trueskill2: { beta: 7.5, tau: 0.3, drawProbability: 0.02 } },
+      mockConnectors
+    );
+    const db = createMockDb();
+    let persistedRows = null;
+    db.bulkIncrementPlayerStats = async (rows) => { persistedRows = rows; };
+    tracker.db = db;
+
+    const session = createMockSession();
+    session.roundStartTime = 1000;
+    session.endRound = () => [
+      { eosID: 'p1', name: 'P1', steamID: 's1', assignedTeamID: 1, participationRatio: 0.5 },
+      { eosID: 'p2', name: 'P2', steamID: 's2', assignedTeamID: 2, participationRatio: 1.0 }
+    ];
+    tracker.session = session;
+    await tracker.mount();
+
+    let capturedLog = null;
+    tracker._appendMatchLog = async (record) => { capturedLog = record; };
+
+    server.players = Array(6).fill(0).map((_, i) => ({ eosID: `x${i}`, teamID: (i % 2) + 1 }));
+    tracker.eloCache.set('p1', { mu: 25, sigma: 8.333, roundsPlayed: 5, wins: 3, losses: 2 });
+    tracker.eloCache.set('p2', { mu: 25, sigma: 8.333, roundsPlayed: 5, wins: 2, losses: 3 });
+
+    await server.emit('ROUND_ENDED', { winner: { team: '1', tickets: 200 }, loser: { team: '2', tickets: 50 } });
+
+    if (!capturedLog) throw new Error('match log record not written');
+
+    // Parameter provenance: the log must record what the round was COMPUTED
+    // with (this.params), not the legacy default constants.
+    if (capturedLog.params.beta !== 7.5) {
+      throw new Error(`log params.beta must be the live 7.5, got ${JSON.stringify(capturedLog.params)}`);
+    }
+    if (capturedLog.params.tau !== 0.3) throw new Error(`log params.tau must be 0.3, got ${capturedLog.params.tau}`);
+    if (capturedLog.params.drawProbability !== 0.02) {
+      throw new Error(`log params.drawProbability must be 0.02, got ${capturedLog.params.drawProbability}`);
+    }
+    if (capturedLog.trueskill2Overrides?.beta !== 7.5) {
+      throw new Error('operator trueskill2 overrides must be snapshotted in the record');
+    }
+
+    // Applied-value consistency: since participation scaling moved into the
+    // engine, the log must not scale again — muAfter must equal what was
+    // actually persisted (p1 has ratio 0.5, so double scaling would show here).
+    const p1 = capturedLog.players.find((p) => p.eosID === 'p1');
+    const row1 = persistedRows?.find((r) => r.eosID === 'p1');
+    if (!row1) throw new Error('persisted row for p1 missing');
+    if (Math.abs(p1.muAfter - row1.mu) > 1e-12) {
+      throw new Error(`log muAfter (${p1.muAfter}) must equal the persisted mu (${row1.mu}) — deltas double-scaled`);
+    }
+    if (Math.abs(p1.sigmaAfter - row1.sigma) > 1e-12) {
+      throw new Error(`log sigmaAfter (${p1.sigmaAfter}) must equal the persisted sigma (${row1.sigma})`);
+    }
+    if (Math.abs(p1.muBefore + p1.scaledDeltaMu - p1.muAfter) > 1e-12) {
+      throw new Error('muBefore + scaledDeltaMu must equal muAfter');
+    }
+  });
+
+  await runTest('Finite guard: non-finite engine deltas skip the round, nothing persisted', async () => {
+    const server = createMockServer();
+    const tracker = new EloTracker(server, mockOptions, mockConnectors);
+    const db = createMockDb();
+    let bulkCalled = false;
+    db.bulkIncrementPlayerStats = async () => { bulkCalled = true; };
+    tracker.db = db;
+
+    const session = createMockSession();
+    session.roundStartTime = 1000;
+    session.endRound = () => [
+      { eosID: 'p1', name: 'P1', steamID: 's1', assignedTeamID: 1, participationRatio: 1.0 },
+      { eosID: 'p2', name: 'P2', steamID: 's2', assignedTeamID: 2, participationRatio: 1.0 }
+    ];
+    tracker.session = session;
+    await tracker.mount();
+    tracker._appendMatchLog = async () => {};
+
+    server.players = Array(6).fill(0).map((_, i) => ({ eosID: `x${i}`, teamID: (i % 2) + 1 }));
+    tracker.eloCache.set('p1', { mu: 25, sigma: 8.333, roundsPlayed: 5, wins: 3, losses: 2 });
+    tracker.eloCache.set('p2', { mu: 25, sigma: 8.333, roundsPlayed: 5, wins: 2, losses: 3 });
+
+    // Simulate an instability that computes without throwing: drawProbability 1
+    // ⇒ erfInv(1) = Infinity ⇒ infinite deltaMu. (loadParameters rejects this at
+    // mount — this bypasses it deliberately to prove the last line of defense.)
+    tracker.params = Object.freeze({ ...tracker.params, drawProbability: 1 });
+
+    await server.emit('ROUND_ENDED', { winner: { team: '1', tickets: 200 }, loser: { team: '2', tickets: 50 } });
+
+    if (bulkCalled) throw new Error('non-finite deltas must never be persisted');
+    const cached = tracker.eloCache.get('p1');
+    if (cached && !Number.isFinite(cached.mu)) throw new Error('cache must not hold non-finite mu');
+  });
+
   await runTest('Quit detection: low participation but recently seen is NOT a quit', async () => {
     const { tracker } = await makeTrackerForTest();
     const EloSessionManager = (await import('../utils/elo-session-manager.js')).default;

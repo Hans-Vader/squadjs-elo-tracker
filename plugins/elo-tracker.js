@@ -908,8 +908,6 @@ export default class EloTracker extends BasePlugin {
     // Node's default unhandled-rejection policy, can take down the whole
     // SquadJS instance. Contain it here: skip the round, leave ratings
     // untouched (nothing is mutated before this point), post a skip embed.
-    // ponytail: guards the throw path only — NaN inputs (e.g. drawProbability>=1)
-    // don't throw; a finite-check on mu/sigma before persistence is a separate fix.
     let team1Updates, team2Updates;
     try {
       ({ team1Updates, team2Updates } = computeRoundUpdate(
@@ -919,6 +917,16 @@ export default class EloTracker extends BasePlugin {
         perPlayerMeta,
         this.params
       ));
+      // Last line of defense: some instabilities compute to Infinity/NaN
+      // WITHOUT throwing (loadParameters validates the config, but corrupt
+      // cache values or future factors could still slip through) — a
+      // non-finite delta must never reach the cache or the DB.
+      const nonFinite = [...team1Updates, ...team2Updates].find(
+        (u) => !Number.isFinite(u.deltaMu) || !Number.isFinite(u.deltaSigma)
+      );
+      if (nonFinite) {
+        throw new Error(`non-finite rating delta (deltaMu=${nonFinite.deltaMu}, deltaSigma=${nonFinite.deltaSigma})`);
+      }
     } catch (err) {
       Logger.verbose('EloTracker', 1, `[onRoundEnded] Rating engine failed — round skipped, ratings unchanged: ${err.stack || err.message}`);
       const targetReportChannel = this.discordReportChannel || this.discordAdminChannel;
@@ -947,16 +955,15 @@ export default class EloTracker extends BasePlugin {
       const teamRegulars = [];
 
       players.forEach((player, i) => {
+        // Participation scaling happens inside the engine (team factor only).
         const { deltaMu, deltaSigma } = updates[i];
         const rating = getRating(player.eosID);
-        const scaledDeltaMu = deltaMu * player.participationRatio;
-        const scaledDeltaSigma = deltaSigma * player.participationRatio;
 
-        totalDeltaMu += scaledDeltaMu;
-        totalDeltaSigma += Math.abs(scaledDeltaSigma); // Sum absolute change in uncertainty
+        totalDeltaMu += deltaMu;
+        totalDeltaSigma += Math.abs(deltaSigma); // Sum absolute change in uncertainty
 
-        const newMu = rating.mu + scaledDeltaMu;
-        const newSigma = Math.max(rating.sigma - scaledDeltaSigma, 0.5);
+        const newMu = rating.mu + deltaMu;
+        const newSigma = Math.max(rating.sigma - deltaSigma, 0.5);
         const wins = (rating.wins ?? 0) + (isWinner ? 1 : 0);
         const losses = (rating.losses ?? 0) + (isLoser ? 1 : 0);
 
@@ -979,7 +986,7 @@ export default class EloTracker extends BasePlugin {
             name: player.name,
             muBefore: rating.mu,
             muAfter: newMu,
-            deltaMu: scaledDeltaMu
+            deltaMu
           });
         }
 
@@ -1041,17 +1048,25 @@ export default class EloTracker extends BasePlugin {
       gameMode: gameMode ?? 'Unknown',
       outcome,
       roundDuration: roundEndTime - this.session.roundStartTime,
+      // Provenance: what this round was COMPUTED with. The scalars come from
+      // the live this.params; trueskill2Overrides is the operator's config
+      // block verbatim — loadParameters(overrides) is deterministic, so this
+      // snapshot fully reproduces the effective parameters.
       params: {
-        BETA: EloCalculator.BETA,
-        TAU: EloCalculator.TAU,
-        DRAW_PROBABILITY: EloCalculator.DRAW_PROBABILITY
+        beta: this.params.beta,
+        tau: this.params.tau,
+        drawProbability: this.params.drawProbability
       },
+      trueskill2Overrides: this.options.trueskill2 ?? {},
       players: [
         ...team1Eligible.map((player, i) => {
           const rating = team1RatingsBefore[i];
+          // Engine deltas are FINAL (participation scaling happens inside the
+          // engine, team factor only). rawDelta*/scaledDelta* are kept as
+          // field names for schema stability and are now identical.
           const { deltaMu, deltaSigma } = team1Updates[i];
-          const scaledDeltaMu = deltaMu * player.participationRatio;
-          const scaledDeltaSigma = deltaSigma * player.participationRatio;
+          const scaledDeltaMu = deltaMu;
+          const scaledDeltaSigma = deltaSigma;
           const meta = perPlayerMeta[player.eosID] ?? {};
           return {
             eosID: player.eosID,
@@ -1082,8 +1097,8 @@ export default class EloTracker extends BasePlugin {
         ...team2Eligible.map((player, i) => {
           const rating = team2RatingsBefore[i];
           const { deltaMu, deltaSigma } = team2Updates[i];
-          const scaledDeltaMu = deltaMu * player.participationRatio;
-          const scaledDeltaSigma = deltaSigma * player.participationRatio;
+          const scaledDeltaMu = deltaMu; // final engine delta, see team1 note
+          const scaledDeltaSigma = deltaSigma;
           const meta = perPlayerMeta[player.eosID] ?? {};
           return {
             eosID: player.eosID,
