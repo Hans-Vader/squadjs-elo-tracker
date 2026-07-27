@@ -111,4 +111,42 @@ export default async function runDatabaseTests(runTest) {
     if (read.experienceBefore !== 27) throw new Error(`experienceBefore column missing: ${read.experienceBefore}`);
   });
 
+  await runTest('Schema check: fresh DB reports RoundPlayers schema OK', async () => {
+    const seq = new Sequelize({ dialect: 'sqlite', storage: ':memory:', logging: false });
+    const freshDb = new EloDatabase({}, {}, { sqlite: seq });
+    const result = await freshDb.initDB();
+    if (result.roundPlayersSchemaOk !== true) {
+      throw new Error(`fresh DB must report roundPlayersSchemaOk=true, got ${result.roundPlayersSchemaOk}`);
+    }
+    await seq.close();
+  });
+
+  await runTest('Schema check: pre-existing RoundPlayers missing TS2 columns is detected', async () => {
+    // Simulate an OLD install: a RoundPlayers table created before the TS2
+    // columns existed. sync() without alter never adds them, so every
+    // insertRoundPlayers would fail silently forever — initDB must flag it.
+    const seq = new Sequelize({ dialect: 'sqlite', storage: ':memory:', logging: false });
+    await seq.getQueryInterface().createTable('Elo_RoundPlayers', {
+      id: { type: Sequelize.INTEGER, primaryKey: true, autoIncrement: true },
+      eosID: { type: Sequelize.STRING, allowNull: false },
+      teamID: { type: Sequelize.INTEGER, allowNull: false },
+      participationRatio: { type: Sequelize.FLOAT, allowNull: false },
+      muBefore: { type: Sequelize.FLOAT, allowNull: false },
+      sigmaBefore: { type: Sequelize.FLOAT, allowNull: false },
+      rawDeltaMu: { type: Sequelize.FLOAT, allowNull: false },
+      rawDeltaSigma: { type: Sequelize.FLOAT, allowNull: false },
+      scaledDeltaMu: { type: Sequelize.FLOAT, allowNull: false },
+      scaledDeltaSigma: { type: Sequelize.FLOAT, allowNull: false },
+      muAfter: { type: Sequelize.FLOAT, allowNull: false },
+      sigmaAfter: { type: Sequelize.FLOAT, allowNull: false }
+      // no partySize/clanTag/kills/deaths/quit/experienceBefore
+    });
+    const oldDb = new EloDatabase({}, {}, { sqlite: seq });
+    const result = await oldDb.initDB();
+    if (result.roundPlayersSchemaOk !== false) {
+      throw new Error('missing TS2 columns must set roundPlayersSchemaOk=false');
+    }
+    await seq.close();
+  });
+
 }

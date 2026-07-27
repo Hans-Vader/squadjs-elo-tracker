@@ -436,6 +436,92 @@ export default async function runTrackerTests(runTest) {
     }
   });
 
+  await runTest('Cold cache after restart: eligible ratings warmed from DB, not overwritten with defaults', async () => {
+    const server = createMockServer();
+    const tracker = new EloTracker(server, mockOptions, mockConnectors);
+    const db = createMockDb();
+    // The DB holds REAL accumulated ratings; the cache is cold (post-restart,
+    // before the background player-info fetch has warmed it).
+    db.getPlayerStatsBatch = async (ids) => {
+      const m = new Map();
+      for (const id of ids) m.set(id, { mu: 30, sigma: 5, roundsPlayed: 20, wins: 15, losses: 5 });
+      return m;
+    };
+    let persisted = null;
+    db.bulkIncrementPlayerStats = async (rows) => { persisted = rows; };
+    tracker.db = db;
+
+    const session = createMockSession();
+    session.roundStartTime = 1000;
+    session.endRound = () => [
+      { eosID: 'p1', name: 'P1', steamID: 's1', assignedTeamID: 1, participationRatio: 1.0 },
+      { eosID: 'p2', name: 'P2', steamID: 's2', assignedTeamID: 2, participationRatio: 1.0 }
+    ];
+    tracker.session = session;
+    await tracker.mount();
+    let capturedLog = null;
+    tracker._appendMatchLog = async (rec) => { capturedLog = rec; };
+
+    tracker.eloCache.clear(); // simulate the empty post-restart cache
+    server.players = Array(6).fill(0).map((_, i) => ({ eosID: `x${i}`, teamID: (i % 2) + 1 }));
+
+    await server.emit('ROUND_ENDED', { winner: { team: '1', tickets: 200 }, loser: { team: '2', tickets: 50 } });
+
+    if (!persisted) throw new Error('nothing persisted');
+    if (!capturedLog) throw new Error('no match log captured');
+    // The pre-round rating must be p1's REAL DB value (mu 30, sigma 5), proving
+    // the cold cache was warmed from the DB. Without the warm it would be the
+    // 25.0 / 8.333 default — silently overwriting 20 rounds of history.
+    const logP1 = capturedLog.players.find((p) => p.eosID === 'p1');
+    if (Math.abs(logP1.muBefore - 30) > 1e-9) {
+      throw new Error(`cold-cache overwrite: p1 muBefore=${logP1.muBefore} — expected 30 (warmed from DB), not the 25 default`);
+    }
+    if (Math.abs(logP1.sigmaBefore - 5) > 1e-9) {
+      throw new Error(`p1 sigmaBefore=${logP1.sigmaBefore} — expected 5 (warmed), not the 8.333 default`);
+    }
+    // Experience offset must also see the real round count (20), read from the
+    // same cache — proving the warm happens before _buildPerPlayerMeta too.
+    if (logP1.experienceBefore !== 20) {
+      throw new Error(`p1 experienceBefore=${logP1.experienceBefore} — expected 20 (warmed), not 0`);
+    }
+  });
+
+  await runTest('Duplicate ROUND_ENDED: second fire is a no-op; NEW_GAME resets the guard', async () => {
+    const server = createMockServer();
+    const tracker = new EloTracker(server, mockOptions, mockConnectors);
+    const db = createMockDb();
+    let bulkCalls = 0;
+    db.bulkIncrementPlayerStats = async () => { bulkCalls++; };
+    tracker.db = db;
+
+    const session = createMockSession();
+    session.roundStartTime = 1000;
+    session.endRound = () => [
+      { eosID: 'p1', name: 'P1', steamID: 's1', assignedTeamID: 1, participationRatio: 1.0 },
+      { eosID: 'p2', name: 'P2', steamID: 's2', assignedTeamID: 2, participationRatio: 1.0 }
+    ];
+    tracker.session = session;
+    await tracker.mount();
+    tracker._appendMatchLog = async () => {};
+
+    server.players = Array(6).fill(0).map((_, i) => ({ eosID: `x${i}`, teamID: (i % 2) + 1 }));
+    const seed = () => {
+      tracker.eloCache.set('p1', { mu: 25, sigma: 8.333, roundsPlayed: 5, wins: 3, losses: 2 });
+      tracker.eloCache.set('p2', { mu: 25, sigma: 8.333, roundsPlayed: 5, wins: 2, losses: 3 });
+    };
+    seed();
+
+    await server.emit('ROUND_ENDED', { winner: { team: '1', tickets: 200 }, loser: { team: '2', tickets: 50 } });
+    await server.emit('ROUND_ENDED', { winner: { team: '1', tickets: 200 }, loser: { team: '2', tickets: 50 } });
+    if (bulkCalls !== 1) throw new Error(`duplicate ROUND_ENDED double-processed: ${bulkCalls} persistence calls`);
+
+    // NEW_GAME must reset the guard so the next round is processed normally.
+    await server.emit('NEW_GAME', {});
+    seed();
+    await server.emit('ROUND_ENDED', { winner: { team: '1', tickets: 200 }, loser: { team: '2', tickets: 50 } });
+    if (bulkCalls !== 2) throw new Error(`NEW_GAME must reset the processed guard, got ${bulkCalls} total calls`);
+  });
+
   await runTest('Finite guard: non-finite engine deltas skip the round, nothing persisted', async () => {
     const server = createMockServer();
     const tracker = new EloTracker(server, mockOptions, mockConnectors);

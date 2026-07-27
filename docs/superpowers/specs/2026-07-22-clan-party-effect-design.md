@@ -38,6 +38,11 @@ der In-Game-Squad-Größe. Die Engine-Mathematik bleibt unverändert.
 | Kalibrierung | **Rückwirkend aus Namen.** Eine gemeinsame Grouping-Funktion für Live + Replay; bestehendes Match-Log kalibriert den Party-Effekt sofort. |
 | Ineligible Teammates | Zählen zur Party-Größe mit (spiegelt bisherige Squad-Logik: „waren real dabei"). |
 
+> **Amendments (nach Implementierung / Code-Review).** Drei Weichen wurden während der Umsetzung bewusst anders entschieden:
+> 1. **Keine DB-Migration** (Commit 996c14a): Statt additiver Migration wird ein **Clean Install vorausgesetzt** — `sync()` erzeugt das volle Schema, alte DBs werden nicht migriert. `initDB` prüft jetzt beim Start, ob `Elo_RoundPlayers` die TS2-Spalten hat, und deaktiviert bei Fehlen das per-Runde-DB-Logging **laut** (statt jede Runde still zu scheitern). Betrifft §3-Zeile 1 und §8.
+> 2. **Replay bevorzugt geloggte `partySize`/`clanTag`** (Commit 4f8409c): Post-Feature-Records tragen die live-berechneten Werte (inkl. ineligible Mitglieder, die aus Namen nicht rekonstruierbar sind); Replay/Calibrate nutzen diese und rechnen **nur für Pre-Feature-Records** aus Namen neu. Damit sind geloggte Party-Werte autoritativ (§7-Zeile „nur für Transparenz/Audit" ist überholt). Ein `--recompute-party`-Override ist bewusst aufgeschoben (JSONL enthält die Namen, Neuberechnung bleibt jederzeit möglich).
+> 3. **Bare-Prefix-Korroboration + `maxEditDistance` Default `0`** (Code-Review C1/ed): Bare-Prefix-Tags (`KM Lookout`) bilden nur dann eine Party, wenn ein Teamkollege denselben Tag **explizit** trägt (`[KM] Warlord`) — sonst würden Zweiwort-Namen (`The Rock`+`The Bull`) Phantom-Parties bilden. `maxEditDistance` defaultet auf `0` (Homoglyphen/Case mergen bereits via Normalisierung; höhere Werte fusionieren verschiedene Clans). Betrifft §3-Zeile „Tag-Erkennung".
+
 ## 4. Architektur — geteilte Funktion
 
 Neu in `utils/elo-clan-grouping.js` (Single Source of Truth, genutzt von Plugin

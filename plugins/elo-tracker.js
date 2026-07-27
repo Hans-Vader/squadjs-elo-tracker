@@ -254,6 +254,15 @@ export default class EloTracker extends BasePlugin {
     // Connected players only. Populated on join, flushed at round end.
     this.eloCache = new Map();
 
+    // Idempotency guard: SquadJS can emit ROUND_ENDED more than once for the
+    // same round (sessions are only cleared on NEW_GAME). Set once a round is
+    // processed, reset on NEW_GAME — a duplicate would otherwise double-count
+    // wins/rounds and recompute against the just-cleared (cold) cache.
+    this._roundProcessed = false;
+
+    // Set from db.initDB(); false ⇒ old DB schema ⇒ per-round DB logging off.
+    this._roundPlayersSchemaOk = true;
+
     // TrueSkill2 engine parameters (frozen; neutral unless configured)
     this.params = loadParameters(this.options.trueskill2 ?? {});
 
@@ -318,7 +327,19 @@ export default class EloTracker extends BasePlugin {
     Logger.verbose('EloTracker', 1, 'Mounting plugin.');
     this.ready = false;
 
-    const { roundStartTime: persistedStartTime } = await this.db.initDB();
+    const { roundStartTime: persistedStartTime, roundPlayersSchemaOk } = await this.db.initDB();
+
+    // Gate per-round DB logging on the schema actually being current. On a
+    // pre-TrueSkill2 DB the Elo_RoundPlayers columns are missing and every
+    // insert would fail silently — better to disable that one feature loudly
+    // than to log an error every round. JSONL logging is unaffected.
+    this._roundPlayersSchemaOk = roundPlayersSchemaOk !== false;
+    if (this.options.enableDatabaseLogging && !this._roundPlayersSchemaOk) {
+      Logger.verbose('EloTracker', 1,
+        '[mount] enableDatabaseLogging is ON but Elo_RoundPlayers is on an old schema — ' +
+        'per-round DB logging is DISABLED for this session. See the [DB] SCHEMA MISMATCH notice above. ' +
+        'JSONL match logging still works.');
+    }
 
     // --- Prune stale player entries ---
     const { tier1, tier2 } = await this.db.pruneStaleEntries(this.options.minRoundsForLeaderboard);
@@ -515,6 +536,7 @@ export default class EloTracker extends BasePlugin {
      this.session.startRound(now);
      await this.db.saveRoundStartTime(now);
      this.lastRoundSnapshot = null;
+     this._roundProcessed = false; // new round ⇒ allow processing again
      this.eloCache.clear();
      this.killsByEosID.clear();
      this.deathsByEosID.clear();
@@ -816,6 +838,14 @@ export default class EloTracker extends BasePlugin {
       return;
     }
 
+    // Duplicate ROUND_ENDED for the same round (no NEW_GAME in between): the
+    // session and cache are in a post-processing state, so re-running would
+    // double-count and corrupt ratings. Ignore silently until NEW_GAME resets.
+    if (this._roundProcessed) {
+      Logger.verbose('EloTracker', 1, '[onRoundEnded] Round already processed — ignoring duplicate event.');
+      return;
+    }
+
     const roundEndTime = Date.now();
 
     // --- Eligibility checks ---
@@ -874,6 +904,26 @@ export default class EloTracker extends BasePlugin {
     }
 
     const calculationStartTime = Date.now();
+
+    // --- Warm the rating cache for any eligible player missing from it ---
+    // After a SquadJS restart mid-round the cache is empty until the next
+    // background player-info fetch fills it. If ROUND_ENDED lands in that
+    // window, computing from MU/SIGMA defaults and persisting would wipe real
+    // accumulated ratings (and the experience offset would read 0 rounds).
+    // The data is one query away — fetch it synchronously before any read.
+    const uncached = eligible.map(p => p.eosID).filter(id => !this.eloCache.has(id));
+    if (uncached.length > 0) {
+      try {
+        const fetched = await this.db.getPlayerStatsBatch(uncached);
+        for (const [eosID, record] of fetched) {
+          if (record) this.eloCache.set(eosID, record);
+        }
+        // Players still missing here are genuinely new — the MU/SIGMA defaults
+        // in getRating are correct for them.
+      } catch (err) {
+        Logger.verbose('EloTracker', 1, `[onRoundEnded] Cache warm fetch failed: ${err.message}`);
+      }
+    }
 
     // --- Build team arrays with mu/sigma from cache ---
     const getRating = (eosID) =>
@@ -940,6 +990,10 @@ export default class EloTracker extends BasePlugin {
       }
       return;
     }
+
+    // Commit point: from here we mutate the cache and DB. Mark the round
+    // processed so a duplicate ROUND_ENDED is ignored (reset on NEW_GAME).
+    this._roundProcessed = true;
 
     const team1RatingsBefore = team1Eligible.map(p => getRating(p.eosID));
     const team2RatingsBefore = team2Eligible.map(p => getRating(p.eosID));
@@ -1126,7 +1180,8 @@ export default class EloTracker extends BasePlugin {
     this._appendMatchLog(matchRecord).catch(err => Logger.verbose('EloTracker', 1, `Failed to append match log: ${err.message}`));
 
     // Fire-and-forget database insert if enabled and roundRecord was created
-    if (this.options.enableDatabaseLogging && roundRecord && roundRecord.id) {
+    // (skipped when the DB is on an old schema — see mount()).
+    if (this.options.enableDatabaseLogging && this._roundPlayersSchemaOk && roundRecord && roundRecord.id) {
       // Compute matchId and roundStartTime from session state
       const roundStartTime = this.session.roundStartTime;
       let matchId = null;
