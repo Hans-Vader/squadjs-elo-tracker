@@ -18,8 +18,9 @@
  *                   (default off). Must mirror the live plugin's
  *                   partyCaseSensitive config so replay parity holds.
  * - --party-max-edit-distance=N     Levenshtein merge distance for
- *                   near-duplicate clan tags (default 1, 0 = exact match
- *                   only). Must mirror the live plugin's
+ *                   near-duplicate clan tags (default 0 = exact match
+ *                   only; raising it can fuse different clans into one
+ *                   phantom party). Must mirror the live plugin's
  *                   partyMaxEditDistance config so replay parity holds.
  * - --ignore-tags=A,B               Comma-separated clan tags to treat as
  *                   public (community tags). Default empty. Must mirror
@@ -148,6 +149,9 @@ export async function rebuildFromLog(matchlogPath, backupPath = null, paramOverr
     const roundDurationMin = (match.roundDuration ?? 0) / 60000;
     // Name-based fallback grouping is only needed for pre-feature records; if
     // every player carries the live-logged partySize, skip the recompute.
+    // ponytail: logged values are authoritative and thus uncorrectable; add a
+    // --recompute-party override the first time logged party data turns out
+    // wrong (e.g. a community tag discovered after weeks of logging).
     const partyByEos = match.players.some(pl => pl.partySize == null)
       ? computePartySizes(
           match.players.map(pl => ({ eosID: pl.eosID, name: pl.name, teamID: pl.teamID })),
@@ -219,7 +223,7 @@ async function main() {
     }
     return n;
   };
-  const partyMaxEditDistance = edArg ? parseEditDistance(edArg.split('=')[1]) : 1;
+  const partyMaxEditDistance = edArg ? parseEditDistance(edArg.split('=')[1]) : 0;
   const igArg = process.argv.find(a => a.startsWith('--ignore-tags='));
   const partyIgnoredTags = igArg ? igArg.split('=')[1].split(',').map(s => s.trim()).filter(Boolean) : [];
   const args = process.argv.slice(2).filter(a =>

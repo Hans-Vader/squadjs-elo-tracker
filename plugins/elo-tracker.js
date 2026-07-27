@@ -216,8 +216,8 @@ export default class EloTracker extends BasePlugin {
        },
        partyMaxEditDistance: {
          required: false,
-         description: 'Levenshtein distance for merging near-identical clan tags (0 = exact only).',
-         default: 1,
+         description: 'Levenshtein distance for merging near-identical clan tags. Default 0 = exact only (homoglyph/case variants already merge via normalization). WARNING: raising this can fuse different clans with similar tags ([KSK]+[KSC]) into one phantom party, permanently logged into partySize/clanTag.',
+         default: 0,
          type: 'number'
        },
        partyIgnoredTags: {

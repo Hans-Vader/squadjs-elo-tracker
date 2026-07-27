@@ -182,9 +182,10 @@ This is why the **party factor (eq. 7) groups by clan tag, not by in-game squad.
   and their shared tag is right there in the name.
 
 Because tags are free-text, detection is **heuristic and tunable**: `partyCaseSensitive`,
-`partyMaxEditDistance` (Levenshtein merge of near-identical tags — with the risk of merging
-genuinely different tags), and `partyIgnoredTags` (community/meme tags that aren't real
-coordinated clans). Bare prefixes without a visible boundary (`KM Lookout`) only count when a
+`partyMaxEditDistance` (Levenshtein merge of near-identical tags; default 0 = exact-only,
+since homoglyph/case variants already merge via normalization — raising it risks fusing
+genuinely different clans into one phantom party), and `partyIgnoredTags` (community/meme
+tags that aren't real coordinated clans). Bare prefixes without a visible boundary (`KM Lookout`) only count when a
 teammate carries the same tag explicitly (`[KM] Warlord`) — so ordinary two-word names
 (`The Rock` + `The Bull`) never form a party. **Audit with
 `tools/elo-clans-audit.js` before trusting the grouping** — a mis-grouped party feeds the wrong

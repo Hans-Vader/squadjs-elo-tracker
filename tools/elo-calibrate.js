@@ -51,7 +51,7 @@ const PARTY_OPTIONS = {
   caseSensitive: process.argv.includes('--party-case-sensitive'),
   maxEditDistance: (() => {
     const a = process.argv.find(x => x.startsWith('--party-max-edit-distance='));
-    return a ? parseEditDistance(a.split('=')[1]) : 1;
+    return a ? parseEditDistance(a.split('=')[1]) : 0;
   })(),
   ignoredTags: (() => {
     const a = process.argv.find(x => x.startsWith('--ignore-tags='));

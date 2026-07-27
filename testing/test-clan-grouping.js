@@ -257,6 +257,23 @@ export default async function runClanGroupingTests(runTest) {
     if (computePartySizes(players, { maxEditDistance: 1 }).get('a').partySize !== 2) throw new Error('editDistance 1 ⇒ merge');
   });
 
+  await runTest('computePartySizes: default is exact-only — near tags stay separate clans', async () => {
+    const players = [
+      { eosID: 'a', name: '[KSK] One', teamID: 1 },
+      { eosID: 'b', name: '[KSC] Two', teamID: 1 } // ed-1: a DIFFERENT clan
+    ];
+    const m = computePartySizes(players);
+    if (m.get('a').partySize !== 1 || m.get('b').partySize !== 1) {
+      throw new Error(`default must not merge distinct ed-1 tags, got a=${m.get('a').partySize} b=${m.get('b').partySize}`);
+    }
+    // homoglyph/case variants still merge at default via normalizeTag (no edit distance needed)
+    const homo = computePartySizes([
+      { eosID: 'x', name: '[♣ΛCE] One', teamID: 1 },
+      { eosID: 'y', name: '[♣ΛC€] Two', teamID: 1 }
+    ]);
+    if (homo.get('x').partySize !== 2) throw new Error('homoglyph variants must still merge at default');
+  });
+
   // ─── computePartySizes — bare-prefix corroboration (C1 fix) ────────
 
   await runTest('computePartySizes: bare two-word names do not form phantom parties', async () => {

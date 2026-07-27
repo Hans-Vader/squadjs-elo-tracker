@@ -263,13 +263,16 @@ export function extractClanGroups(rawPlayers, options = {}) {
  * @param {Array<{eosID, name, teamID}>} players  all round participants
  * @param {Object} [options]
  *   caseSensitive   {boolean}  default false — passed to extractClanGroups
- *   maxEditDistance {number}   default 1     — Levenshtein merge (0 = exact)
+ *   maxEditDistance {number}   default 0     — exact match only. Homoglyph/
+ *                              case variants already merge via normalizeTag;
+ *                              raising this can fuse DIFFERENT clans
+ *                              ([KSK]+[KSC]) into one phantom party.
  *   ignoredTags     {string[]} default []    — treated as public (no clan)
  * @returns {Map<string, {partySize:number, clanTag:string|null}>}
  */
 export function computePartySizes(players, options = {}) {
   const caseSensitive   = options.caseSensitive ?? false;
-  const maxEditDistance = options.maxEditDistance ?? 1;
+  const maxEditDistance = options.maxEditDistance ?? 0;
   const ignore = new Set((options.ignoredTags ?? []).map(normalizeTag).filter(Boolean));
 
   const result = new Map();
