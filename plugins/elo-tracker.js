@@ -145,6 +145,7 @@ import { EloDiscord } from '../utils/elo-discord.js';
 import EloCommands from '../utils/elo-commands.js';
 import { loadParameters } from '../utils/elo-parameters.js';
 import { computeRoundUpdate } from '../utils/elo-trueskill2-engine.js';
+import { computePartySizes } from '../utils/elo-clan-grouping.js';
 
 export default class EloTracker extends BasePlugin {
   static version = '1.3.0';
@@ -207,9 +208,27 @@ export default class EloTracker extends BasePlugin {
          default: false,
          type: 'boolean'
        },
+       partyCaseSensitive: {
+         required: false,
+         description: 'Match clan tags case-sensitively (no normalization). Default false = normalized (case/homoglyph-insensitive).',
+         default: false,
+         type: 'boolean'
+       },
+       partyMaxEditDistance: {
+         required: false,
+         description: 'Levenshtein distance for merging near-identical clan tags. Default 0 = exact only (homoglyph/case variants already merge via normalization). WARNING: raising this can fuse different clans with similar tags ([KSK]+[KSC]) into one phantom party, permanently logged into partySize/clanTag.',
+         default: 0,
+         type: 'number'
+       },
+       partyIgnoredTags: {
+         required: false,
+         description: 'Clan tags to treat as public (community tags that are not real clans). Matched normalized. Default empty.',
+         default: [],
+         type: 'array'
+       },
        trueskill2: {
          required: false,
-         description: 'TrueSkill2 engine parameter overrides (squadOffsets, experienceOffsets, killParams, deathParams, quitParams, ...). Neutral by default — see utils/elo-parameters.js.',
+         description: 'TrueSkill2 engine parameter overrides (partyOffsets, experienceOffsets, killParams, deathParams, quitParams, ...). Neutral by default — see utils/elo-parameters.js.',
          default: {},
          type: 'object'
        }
@@ -239,13 +258,10 @@ export default class EloTracker extends BasePlugin {
     this.params = loadParameters(this.options.trueskill2 ?? {});
 
     // Per-round TrueSkill2 observations, cleared on NEW_GAME.
-    // Kills = PLAYER_WOUNDED downs (Squad scoreboard semantics);
-    // deaths = PLAYER_DIED give-up/bleed-out (revives negate a death);
-    // revives = PLAYER_REVIVED credited to the reviver (feeds the revive
-    // count factor — neutral by default, enabled via calibrated reviveParams).
+    // Kills = PLAYER_WOUNDED downs; deaths = PLAYER_DIED (revives negate a death).
+    // Party size (eq.7) is derived from clan tags at round end, not in-game squads.
     this.killsByEosID = new Map();
     this.deathsByEosID = new Map();
-    this.revivesByEosID = new Map();
     // eosID → last timestamp the player was seen in server.players
     this.lastSeenByEosID = new Map();
 
@@ -273,7 +289,6 @@ export default class EloTracker extends BasePlugin {
     this.listeners.onRoundEnded = this.onRoundEnded.bind(this);
     this.listeners.onPlayerWounded = this.onPlayerWounded.bind(this);
     this.listeners.onPlayerDied = this.onPlayerDied.bind(this);
-    this.listeners.onPlayerRevived = this.onPlayerRevived.bind(this);
     this.listeners.onServerInfoUpdated = this.onServerInfoUpdated.bind(this);
     this.listeners.onTeamBalancerScramble = this.onTeamBalancerScramble.bind(this);
     EloDiscord.registerDiscordCommands(this);
@@ -371,7 +386,6 @@ export default class EloTracker extends BasePlugin {
     this.server.removeListener('ROUND_ENDED', this.listeners.onRoundEnded);
     this.server.removeListener('PLAYER_WOUNDED', this.listeners.onPlayerWounded);
     this.server.removeListener('PLAYER_DIED', this.listeners.onPlayerDied);
-    this.server.removeListener('PLAYER_REVIVED', this.listeners.onPlayerRevived);
     this.server.removeListener('UPDATED_SERVER_INFORMATION', this.listeners.onServerInfoUpdated);
     this.server.removeListener('TEAM_BALANCER_SCRAMBLE_EXECUTED', this.listeners.onTeamBalancerScramble);
     this.server.removeListener('CHAT_COMMAND:elo', this.listeners.onEloCommand);
@@ -383,7 +397,6 @@ export default class EloTracker extends BasePlugin {
     this.server.on('ROUND_ENDED', this.listeners.onRoundEnded);
     this.server.on('PLAYER_WOUNDED', this.listeners.onPlayerWounded);
     this.server.on('PLAYER_DIED', this.listeners.onPlayerDied);
-    this.server.on('PLAYER_REVIVED', this.listeners.onPlayerRevived);
     this.server.on('UPDATED_SERVER_INFORMATION', this.listeners.onServerInfoUpdated);
     this.server.on('TEAM_BALANCER_SCRAMBLE_EXECUTED', this.listeners.onTeamBalancerScramble);
     this.server.on('CHAT_COMMAND:elo', this.listeners.onEloCommand);
@@ -415,7 +428,6 @@ export default class EloTracker extends BasePlugin {
     this.server.removeListener('ROUND_ENDED', this.listeners.onRoundEnded);
     this.server.removeListener('PLAYER_WOUNDED', this.listeners.onPlayerWounded);
     this.server.removeListener('PLAYER_DIED', this.listeners.onPlayerDied);
-    this.server.removeListener('PLAYER_REVIVED', this.listeners.onPlayerRevived);
     this.server.removeListener('UPDATED_SERVER_INFORMATION', this.listeners.onServerInfoUpdated);
     this.server.removeListener('TEAM_BALANCER_SCRAMBLE_EXECUTED', this.listeners.onTeamBalancerScramble);
     this.server.removeListener('CHAT_COMMAND:elo', this.listeners.onEloCommand);
@@ -506,7 +518,6 @@ export default class EloTracker extends BasePlugin {
      this.eloCache.clear();
      this.killsByEosID.clear();
      this.deathsByEosID.clear();
-     this.revivesByEosID.clear();
      this.lastSeenByEosID.clear();
      this._roundStartEmbedPending = Date.now();
 
@@ -615,37 +626,18 @@ export default class EloTracker extends BasePlugin {
   }
 
   /**
-   * PLAYER_REVIVED — revive credited to the reviver; feeds the revive count
-   * factor (neutral until reviveParams are calibrated). Mirrors the
-   * anti-gaming guards of onPlayerWounded: no credit for cross-team revives,
-   * for reviving a victim the reviver downed themselves, or for undoing a
-   * teamkill (a teamkill-down + revive loop would otherwise be free rating).
-   */
-  onPlayerRevived(data) {
-    if (!this.ready) return;
-    const reviver = data?.reviver;
-    const victim = data?.victim;
-    const attacker = data?.attacker;
-    if (!reviver?.eosID) return;
-    if (victim?.eosID && reviver.eosID === victim.eosID) return;
-    if (attacker?.eosID && reviver.eosID === attacker.eosID) return;
-    if (reviver.teamID != null && victim?.teamID != null && reviver.teamID !== victim.teamID) return;
-    if (attacker?.teamID != null && victim?.teamID != null && attacker.teamID === victim.teamID) return;
-    this.revivesByEosID.set(reviver.eosID, (this.revivesByEosID.get(reviver.eosID) ?? 0) + 1);
-  }
-
-  /**
    * Build the per-player TrueSkill2 observation map for the engine.
-   * Squad size counts ALL round participants sharing (assignedTeamID,
-   * dominantSquadID) — including ones below the ELO eligibility floor —
-   * because they were really in that squad. Squad 0 (unassigned) is solo.
+   * Party size (eq. 7) is derived from clan tags in player names, grouped
+   * per team — NOT in-game squads. ALL round participants (even ones below
+   * the ELO eligibility floor) count toward a party's size, because they
+   * were really in that clan group.
    *
    * @param {Array} participants  full endRound() output
    * @param {Array} eligible      participants above minParticipationRatio
    * @param {Set<string>|null} quitters  detected quitters (_detectQuittersAt)
    * @param {number|null} roundEndTime   for timePlayedMin (kill/death factor)
-   * @returns {Object} eosID → { squadID, squadSize, experience, kills, deaths,
-   *                             revives, timePlayedMin, quit, quitDetected }
+   * @returns {Object} eosID → { clanTag, partySize, experience, kills, deaths,
+   *                             timePlayedMin, quit, quitDetected }
    */
   _buildPerPlayerMeta(participants, eligible, quitters = null, roundEndTime = null) {
     // Round duration in minutes (includes staging — uniform dilution, the
@@ -655,28 +647,30 @@ export default class EloTracker extends BasePlugin {
       roundEndTime != null && startTime != null
         ? Math.max(0, (roundEndTime - startTime) / 60000)
         : 0;
-    const squadCounts = new Map(); // "teamID:squadID" → member count
-    for (const p of participants) {
-      const sid = p.dominantSquadID ?? 0;
-      if (sid === 0) continue;
-      const key = `${p.assignedTeamID}:${sid}`;
-      squadCounts.set(key, (squadCounts.get(key) ?? 0) + 1);
-    }
+
+    // Clan-tag parties per team; ALL participants count (even ineligible ones).
+    const partyByEos = computePartySizes(
+      participants.map((p) => ({ eosID: p.eosID, name: p.name, teamID: p.assignedTeamID })),
+      {
+        caseSensitive: this.options.partyCaseSensitive,
+        maxEditDistance: this.options.partyMaxEditDistance,
+        ignoredTags: this.options.partyIgnoredTags // undefined until PART B ⇒ []
+      }
+    );
 
     const perPlayerMeta = {};
     for (const p of eligible) {
-      const sid = p.dominantSquadID ?? 0;
       const quitDetected = quitters?.has(p.eosID) ?? false;
+      const party = partyByEos.get(p.eosID) ?? { partySize: 1, clanTag: null };
       perPlayerMeta[p.eosID] = {
-        squadID: sid,
-        squadSize: sid === 0 ? 1 : (squadCounts.get(`${p.assignedTeamID}:${sid}`) ?? 1),
+        clanTag: party.clanTag,
+        partySize: party.partySize,
         // Experience (eq. 8) = rounds played BEFORE this round. Must be read
         // before processTeam() writes the post-round cache entry.
         experience: this.eloCache.get(p.eosID)?.roundsPlayed ?? 0,
-        // Count observations (eq. 9): kills, deaths, revives
+        // Kill/death observations (eq. 9)
         kills: this.killsByEosID.get(p.eosID) ?? 0,
         deaths: this.deathsByEosID.get(p.eosID) ?? 0,
-        revives: this.revivesByEosID.get(p.eosID) ?? 0,
         timePlayedMin: roundDurationMin * p.participationRatio,
         // Detection is always recorded (DB inspection); the engine-facing
         // `quit` only fires when the operator enabled the penalty.
@@ -914,8 +908,6 @@ export default class EloTracker extends BasePlugin {
     // Node's default unhandled-rejection policy, can take down the whole
     // SquadJS instance. Contain it here: skip the round, leave ratings
     // untouched (nothing is mutated before this point), post a skip embed.
-    // ponytail: guards the throw path only — NaN inputs (e.g. drawProbability>=1)
-    // don't throw; a finite-check on mu/sigma before persistence is a separate fix.
     let team1Updates, team2Updates;
     try {
       ({ team1Updates, team2Updates } = computeRoundUpdate(
@@ -925,6 +917,16 @@ export default class EloTracker extends BasePlugin {
         perPlayerMeta,
         this.params
       ));
+      // Last line of defense: some instabilities compute to Infinity/NaN
+      // WITHOUT throwing (loadParameters validates the config, but corrupt
+      // cache values or future factors could still slip through) — a
+      // non-finite delta must never reach the cache or the DB.
+      const nonFinite = [...team1Updates, ...team2Updates].find(
+        (u) => !Number.isFinite(u.deltaMu) || !Number.isFinite(u.deltaSigma)
+      );
+      if (nonFinite) {
+        throw new Error(`non-finite rating delta (deltaMu=${nonFinite.deltaMu}, deltaSigma=${nonFinite.deltaSigma})`);
+      }
     } catch (err) {
       Logger.verbose('EloTracker', 1, `[onRoundEnded] Rating engine failed — round skipped, ratings unchanged: ${err.stack || err.message}`);
       const targetReportChannel = this.discordReportChannel || this.discordAdminChannel;
@@ -953,16 +955,15 @@ export default class EloTracker extends BasePlugin {
       const teamRegulars = [];
 
       players.forEach((player, i) => {
+        // Participation scaling happens inside the engine (team factor only).
         const { deltaMu, deltaSigma } = updates[i];
         const rating = getRating(player.eosID);
-        const scaledDeltaMu = deltaMu * player.participationRatio;
-        const scaledDeltaSigma = deltaSigma * player.participationRatio;
 
-        totalDeltaMu += scaledDeltaMu;
-        totalDeltaSigma += Math.abs(scaledDeltaSigma); // Sum absolute change in uncertainty
+        totalDeltaMu += deltaMu;
+        totalDeltaSigma += Math.abs(deltaSigma); // Sum absolute change in uncertainty
 
-        const newMu = rating.mu + scaledDeltaMu;
-        const newSigma = Math.max(rating.sigma - scaledDeltaSigma, 0.5);
+        const newMu = rating.mu + deltaMu;
+        const newSigma = Math.max(rating.sigma - deltaSigma, 0.5);
         const wins = (rating.wins ?? 0) + (isWinner ? 1 : 0);
         const losses = (rating.losses ?? 0) + (isLoser ? 1 : 0);
 
@@ -985,7 +986,7 @@ export default class EloTracker extends BasePlugin {
             name: player.name,
             muBefore: rating.mu,
             muAfter: newMu,
-            deltaMu: scaledDeltaMu
+            deltaMu
           });
         }
 
@@ -1039,38 +1040,6 @@ export default class EloTracker extends BasePlugin {
       Logger.verbose('EloTracker', 1, `[onRoundEnded] DB write failed: ${err.message}`);
     }
 
-    const buildPlayerRecord = (teamID, ratingsBefore, updates) => (player, i) => {
-      const rating = ratingsBefore[i];
-      const { deltaMu, deltaSigma } = updates[i];
-      const scaledDeltaMu = deltaMu * player.participationRatio;
-      const scaledDeltaSigma = deltaSigma * player.participationRatio;
-      const meta = perPlayerMeta[player.eosID] ?? {};
-      return {
-        eosID: player.eosID,
-        steamID: player.steamID ?? null,
-        name: player.name,
-        teamID,
-        participationRatio: player.participationRatio,
-        muBefore: rating.mu,
-        sigmaBefore: rating.sigma,
-        rawDeltaMu: deltaMu,
-        rawDeltaSigma: deltaSigma,
-        scaledDeltaMu,
-        scaledDeltaSigma,
-        muAfter: rating.mu + scaledDeltaMu,
-        sigmaAfter: Math.max(rating.sigma - scaledDeltaSigma, 0.5),
-        // TrueSkill2 observations (raw detection — gating is an engine
-        // parameter choice, so rebuilds can re-decide it)
-        squadID: meta.squadID ?? 0,
-        squadSize: meta.squadSize ?? 1,
-        kills: meta.kills ?? 0,
-        deaths: meta.deaths ?? 0,
-        revives: meta.revives ?? 0,
-        quit: meta.quitDetected ?? false,
-        experienceBefore: meta.experience ?? 0
-      };
-    };
-
     const matchRecord = {
       ts: roundEndTime,
       matchId: roundEndTime.toString(),
@@ -1079,14 +1048,79 @@ export default class EloTracker extends BasePlugin {
       gameMode: gameMode ?? 'Unknown',
       outcome,
       roundDuration: roundEndTime - this.session.roundStartTime,
+      // Provenance: what this round was COMPUTED with. The scalars come from
+      // the live this.params; trueskill2Overrides is the operator's config
+      // block verbatim — loadParameters(overrides) is deterministic, so this
+      // snapshot fully reproduces the effective parameters.
       params: {
-        BETA: EloCalculator.BETA,
-        TAU: EloCalculator.TAU,
-        DRAW_PROBABILITY: EloCalculator.DRAW_PROBABILITY
+        beta: this.params.beta,
+        tau: this.params.tau,
+        drawProbability: this.params.drawProbability
       },
+      trueskill2Overrides: this.options.trueskill2 ?? {},
       players: [
-        ...team1Eligible.map(buildPlayerRecord(1, team1RatingsBefore, team1Updates)),
-        ...team2Eligible.map(buildPlayerRecord(2, team2RatingsBefore, team2Updates))
+        ...team1Eligible.map((player, i) => {
+          const rating = team1RatingsBefore[i];
+          // Engine deltas are FINAL (participation scaling happens inside the
+          // engine, team factor only). rawDelta*/scaledDelta* are kept as
+          // field names for schema stability and are now identical.
+          const { deltaMu, deltaSigma } = team1Updates[i];
+          const scaledDeltaMu = deltaMu;
+          const scaledDeltaSigma = deltaSigma;
+          const meta = perPlayerMeta[player.eosID] ?? {};
+          return {
+            eosID: player.eosID,
+            name: player.name,
+            teamID: 1,
+            participationRatio: player.participationRatio,
+            muBefore: rating.mu,
+            sigmaBefore: rating.sigma,
+            rawDeltaMu: deltaMu,
+            rawDeltaSigma: deltaSigma,
+            scaledDeltaMu,
+            scaledDeltaSigma,
+            muAfter: rating.mu + scaledDeltaMu,
+            sigmaAfter: Math.max(rating.sigma - scaledDeltaSigma, 0.5),
+            // TrueSkill2 observations. clanTag/partySize are the live-computed
+            // clan-tag grouping (replay prefers these exact values; the in-game
+            // squad is deliberately NOT recorded — it carries no party signal).
+            // quit is raw detection — gating is an engine parameter choice, so
+            // rebuilds can re-decide it.
+            clanTag: meta.clanTag ?? null,
+            partySize: meta.partySize ?? 1,
+            kills: meta.kills ?? 0,
+            deaths: meta.deaths ?? 0,
+            quit: meta.quitDetected ?? false,
+            experienceBefore: meta.experience ?? 0
+          };
+        }),
+        ...team2Eligible.map((player, i) => {
+          const rating = team2RatingsBefore[i];
+          const { deltaMu, deltaSigma } = team2Updates[i];
+          const scaledDeltaMu = deltaMu; // final engine delta, see team1 note
+          const scaledDeltaSigma = deltaSigma;
+          const meta = perPlayerMeta[player.eosID] ?? {};
+          return {
+            eosID: player.eosID,
+            name: player.name,
+            teamID: 2,
+            participationRatio: player.participationRatio,
+            muBefore: rating.mu,
+            sigmaBefore: rating.sigma,
+            rawDeltaMu: deltaMu,
+            rawDeltaSigma: deltaSigma,
+            scaledDeltaMu,
+            scaledDeltaSigma,
+            muAfter: rating.mu + scaledDeltaMu,
+            sigmaAfter: Math.max(rating.sigma - scaledDeltaSigma, 0.5),
+            clanTag: meta.clanTag ?? null,
+            partySize: meta.partySize ?? 1,
+            kills: meta.kills ?? 0,
+            deaths: meta.deaths ?? 0,
+            quit: meta.quitDetected ?? false,
+            experienceBefore: meta.experience ?? 0
+          };
+        })
       ]
     };
     this._appendMatchLog(matchRecord).catch(err => Logger.verbose('EloTracker', 1, `Failed to append match log: ${err.message}`));
@@ -1119,11 +1153,10 @@ export default class EloTracker extends BasePlugin {
         scaledDeltaSigma: p.scaledDeltaSigma,
         muAfter: p.muAfter,
         sigmaAfter: p.sigmaAfter,
-        squadID: p.squadID,
-        squadSize: p.squadSize,
+        partySize: p.partySize,
+        clanTag: p.clanTag,
         kills: p.kills,
         deaths: p.deaths,
-        revives: p.revives,
         quit: p.quit,
         experienceBefore: p.experienceBefore
       }));

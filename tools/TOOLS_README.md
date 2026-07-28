@@ -17,9 +17,9 @@ node analyze-spread.js <backup.json> <matchlog.jsonl>
 ```
 
 **`elo-calibrate.js`**
-Grid searches rating parameters against historical match data, minimising weighted log-loss with a variance penalty. Stage 1 sweeps TrueSkill BETA/TAU (top 10 + prediction curves, unchanged); stage 2 sweeps the TrueSkill2 parameters (`quitParams.mQ`, new-player experience drift, 4-stack squad boost, and one individual-performance strength λ that scales kill/death/revive weights together, normalised per stat by its observed per-minute spread) at the stage-1 winner and prints a ready-to-paste `trueskill2` plugin config. Dimensions without observations in the log (no quit flags / no squad sizes / no count stats) are skipped automatically.
+Grid searches rating parameters against historical match data, minimising weighted log-loss with a variance penalty. Stage 1 sweeps TrueSkill BETA/TAU (top 10 + prediction curves, unchanged); stage 2 sweeps the TrueSkill2 parameters (`quitParams.mQ`, new-player experience drift, 4-stack party boost) at the stage-1 winner and prints a ready-to-paste `trueskill2` plugin config. Dimensions without observations in the log (no quit flags / no clan parties in log) are skipped automatically.
 ```
-node elo-calibrate.js <matchlog.jsonl> <db-backup.json>
+node elo-calibrate.js <matchlog.jsonl> <db-backup.json> [--party-case-sensitive] [--party-max-edit-distance=N] [--ignore-tags=A,B]
 ```
 
 **`elo-clans-audit.js`**
@@ -35,9 +35,9 @@ node elo-inspect.js <rebuilt.json> [old-backup.json] [matchlog.jsonl]
 ```
 
 **`elo-rebuild.js`**
-Replays all recorded matches from scratch through the TrueSkill2 engine. Outputs a restore-compatible JSON backup. Useful after formula corrections. Pre-upgrade log records (no kill/squad/quit fields) replay with those factors inert; `--apply-quit-penalty` applies the quit factor to quit-flagged records (default off, mirroring the plugin).
+Replays all recorded matches from scratch through the TrueSkill2 engine. Outputs a restore-compatible JSON backup. Useful after formula corrections. Pre-upgrade log records (no kill/party/quit fields) replay with those factors inert; `--apply-quit-penalty` applies the quit factor to quit-flagged records (default off, mirroring the plugin). `--params=params.json` feeds the live `trueskill2` overrides into the replay (the calibrator's "paste into config" output works verbatim) — required for parity with a calibrated deployment.
 ```
-node elo-rebuild.js <matchlog.jsonl> <backup.json> [output.json] [--apply-quit-penalty]
+node elo-rebuild.js <matchlog.jsonl> <backup.json> [output.json] [--params=params.json] [--apply-quit-penalty] [--party-case-sensitive] [--party-max-edit-distance=N] [--ignore-tags=A,B]
 ```
 
 **`merge-match-logs.js`**

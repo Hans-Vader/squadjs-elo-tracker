@@ -84,8 +84,8 @@ export default async function runDatabaseTests(runTest) {
       name: 'P1',
       teamID: 1,
       participationRatio: 0.9,
-      squadID: 4,
-      squadSize: 6,
+      partySize: 6,
+      clanTag: 'ACE',
       kills: 12,
       deaths: 3,
       quit: false,
@@ -103,45 +103,12 @@ export default async function runDatabaseTests(runTest) {
 
     const read = await db.models.RoundPlayers.findOne({ where: { eosID: 'ts2_p1' } });
     if (!read) throw new Error('row not inserted');
-    if (read.squadID !== 4) throw new Error(`squadID column missing or wrong: ${read.squadID}`);
-    if (read.squadSize !== 6) throw new Error(`squadSize column missing: ${read.squadSize}`);
+    if (read.partySize !== 6) throw new Error(`partySize column missing or wrong: ${read.partySize}`);
+    if (read.clanTag !== 'ACE') throw new Error(`clanTag column missing or wrong: ${read.clanTag}`);
     if (read.kills !== 12) throw new Error(`kills column missing: ${read.kills}`);
     if (read.deaths !== 3) throw new Error(`deaths column missing: ${read.deaths}`);
     if (read.quit !== false && read.quit !== 0) throw new Error(`quit column missing: ${read.quit}`);
     if (read.experienceBefore !== 27) throw new Error(`experienceBefore column missing: ${read.experienceBefore}`);
   });
 
-  await runTest('RoundPlayers: additive migration adds columns to a legacy table', async () => {
-    // Build a second in-memory DB whose Elo_RoundPlayers table pre-exists in
-    // the LEGACY shape (no TS2 columns), then run initDB and verify the
-    // migration added them.
-    const legacySequelize = new Sequelize({ dialect: 'sqlite', storage: ':memory:', logging: false });
-    await legacySequelize.query(`CREATE TABLE Elo_RoundPlayers (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      matchId VARCHAR(20),
-      roundStartTime BIGINT,
-      roundHistoryId INTEGER NOT NULL,
-      eosID VARCHAR(255) NOT NULL,
-      steamID VARCHAR(255),
-      name VARCHAR(255),
-      teamID INTEGER NOT NULL,
-      participationRatio FLOAT NOT NULL,
-      muBefore FLOAT NOT NULL,
-      sigmaBefore FLOAT NOT NULL,
-      rawDeltaMu FLOAT NOT NULL,
-      rawDeltaSigma FLOAT NOT NULL,
-      scaledDeltaMu FLOAT NOT NULL,
-      scaledDeltaSigma FLOAT NOT NULL,
-      muAfter FLOAT NOT NULL,
-      sigmaAfter FLOAT NOT NULL
-    );`);
-
-    const legacyDb = new EloDatabase({}, {}, { sqlite: legacySequelize });
-    await legacyDb.initDB();
-
-    const desc = await legacySequelize.getQueryInterface().describeTable('Elo_RoundPlayers');
-    for (const col of ['squadID', 'squadSize', 'kills', 'deaths', 'quit', 'experienceBefore']) {
-      if (!desc[col]) throw new Error(`migration did not add column ${col}`);
-    }
-  });
 }

@@ -28,6 +28,7 @@
 const SCALE = 25.0 / 6.0; // = repo β; ratio repo:paper = 4.167:1
 
 function buildDefaults() {
+  const offsetsArray = Array.from({ length: 10 }, () => 0.0);
   return {
     // --- Prior on skill (eq. 1) ---
     mu0: 25.0,
@@ -45,12 +46,10 @@ function buildDefaults() {
     // --- Draw margin ---
     drawProbability: 0.01,
 
-    // --- Squad offset (eq. 7). Index i = squad size i+1. ---
-    // NEUTRAL by default. squadOffsets[0] (solo) is pinned to 0 for
-    // identifiability (the paper fixes squadOffset(1) = 0).
-    // Note: Squad "squads" are in-game squads (max 9), not the pre-made
-    // parties of the paper — calibrate before trusting the signal.
-    squadOffsets: Array.from({ length: 10 }, () => 0.0),
+    // --- Party offset (eq. 7). Index i = party size i+1. ---
+    // Clan-tag co-membership per team (NOT in-game squads). NEUTRAL by default.
+    // partyOffsets[0] (solo) is pinned to 0 for identifiability.
+    partyOffsets: offsetsArray,
 
     // --- Experience offset (eq. 8). Index = matches played, capped at 199. ---
     // NEUTRAL by default. Applied to mu after every match, win or lose.
@@ -67,18 +66,6 @@ function buildDefaults() {
 
     // --- Death factor (eq. 9, c = death) ---
     deathParams: {
-      wPlayer: 0.0,
-      wOpponent: 0.0,
-      variance: 1.0
-    },
-
-    // --- Revive factor (eq. 9, c = revive; not in the paper's Halo set) ---
-    // Same count-factor machinery as kills/deaths, fed by PLAYER_REVIVED.
-    // Deliberate design choice: revives also reward ROLE (medics), not just
-    // raw skill — that is wanted here. Calibrate via elo-calibrate.js, which
-    // ties all three count weights to one strength parameter normalised by
-    // each stat's observed per-minute spread (equal information per SD).
-    reviveParams: {
       wPlayer: 0.0,
       wOpponent: 0.0,
       variance: 1.0
@@ -114,11 +101,66 @@ function deepFreeze(obj) {
 export const DEFAULT_PARAMETERS = deepFreeze(buildDefaults());
 
 /**
+ * Clamped eq.-7 offset lookup, shared by the engine and the calibrator so the
+ * indexing rule (index = partySize − 1, clamped to the table, missing ⇒ 0)
+ * exists exactly once.
+ */
+export function partyOffsetAt(offsets, size) {
+  if (!offsets || offsets.length === 0) return 0;
+  const idx = Math.min(Math.max((size ?? 1) - 1, 0), offsets.length - 1);
+  return offsets[idx] ?? 0;
+}
+
+/**
+ * Range/type validation for a merged parameter object. The `trueskill2`
+ * config block is hand-edited JSON (SquadJS config.json) — typos like
+ * `drawProbability: 1` (⇒ erfInv(1) = Infinity) or a German decimal-comma
+ * string `"7,5"` compute to Infinity/NaN WITHOUT throwing and would be
+ * silently persisted as ratings every round. Fail fast at load instead.
+ */
+function validateParameters(params) {
+  const fin = (v) => typeof v === 'number' && Number.isFinite(v);
+  const fail = (key, value, rule) => {
+    throw new Error(`Invalid trueskill2 config: ${key} = ${JSON.stringify(value)} — ${rule}`);
+  };
+
+  if (!fin(params.mu0)) fail('mu0', params.mu0, 'must be a finite number');
+  if (!fin(params.v0) || !(params.v0 > 0)) fail('v0', params.v0, 'must be a finite number > 0');
+  if (!fin(params.beta) || !(params.beta > 0)) fail('beta', params.beta, 'must be a finite number > 0');
+  if (!fin(params.tau) || params.tau < 0) fail('tau', params.tau, 'must be a finite number >= 0');
+  if (!fin(params.tauPerMinute) || params.tauPerMinute < 0) {
+    fail('tauPerMinute', params.tauPerMinute, 'must be a finite number >= 0');
+  }
+  if (!fin(params.drawProbability) || params.drawProbability < 0 || params.drawProbability >= 1) {
+    fail('drawProbability', params.drawProbability, 'must be a number in [0, 1) — e.g. 0.01 for 1%');
+  }
+  for (const key of ['partyOffsets', 'experienceOffsets']) {
+    params[key].forEach((entry, i) => {
+      if (!fin(entry)) fail(`${key}[${i}]`, entry, 'must be a finite number');
+    });
+  }
+  for (const key of ['killParams', 'deathParams']) {
+    const o = params[key];
+    if (!fin(o.wPlayer)) fail(`${key}.wPlayer`, o.wPlayer, 'must be a finite number');
+    if (!fin(o.wOpponent)) fail(`${key}.wOpponent`, o.wOpponent, 'must be a finite number');
+    if (!fin(o.variance) || o.variance < 0) fail(`${key}.variance`, o.variance, 'must be a finite number >= 0');
+  }
+  if (!fin(params.quitParams.mQ) || params.quitParams.mQ > 0) {
+    fail('quitParams.mQ', params.quitParams.mQ, 'must be a finite number <= 0 (paper constraint; positive would reward quitting)');
+  }
+  if (!fin(params.quitParams.vQ) || !(params.quitParams.vQ > 0)) {
+    fail('quitParams.vQ', params.quitParams.vQ, 'must be a finite number > 0');
+  }
+}
+
+/**
  * Build a parameter object by merging user overrides onto the defaults.
  * - Arrays are merged element-wise and keep the canonical default length.
  * - Plain objects are shallow-merged (nested defaults survive partial overrides).
  * - `undefined`/`null` overrides are ignored.
- * - squadOffsets[0] is forced back to 0 (identifiability).
+ * - partyOffsets[0] is forced back to 0 (identifiability).
+ * - The merged result is validated (see validateParameters) — invalid values
+ *   throw here, at plugin mount / tool start, never mid-round.
  *
  * @param {Object} overrides
  * @returns {Object} deep-frozen parameter object
@@ -144,6 +186,7 @@ export function loadParameters(overrides = {}) {
       params[key] = value;
     }
   }
-  params.squadOffsets[0] = 0; // paper fixes squadOffset(1) = 0
+  params.partyOffsets[0] = 0; // paper fixes offset(1) = 0
+  validateParameters(params);
   return deepFreeze(params);
 }

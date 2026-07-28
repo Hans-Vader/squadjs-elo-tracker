@@ -45,11 +45,11 @@ export async function runAll() {
     { name: 'EloParameters', file: './test-elo-parameters.js' },
     { name: 'EloTrueSkill2Factors', file: './test-elo-trueskill2-factors.js' },
     { name: 'EloTrueSkill2Engine', file: './test-elo-trueskill2-engine.js' },
-    { name: 'EloCalibrationUtils', file: './test-elo-calibration-utils.js' },
     { name: 'EloSessionManager', file: './test-elo-session-manager.js' },
     { name: 'EloDatabase', file: './test-elo-database.js' },
     { name: 'EloTracker', file: './test-elo-tracker.js' },
     { name: 'EloRebuild', file: './test-elo-rebuild.js' },
+    { name: 'EloCalibrate', file: './test-elo-calibrate.js' },
     { name: 'EloSimulation', file: './test-elo-simulation.js', iterations: 20 }
   ];
 

@@ -6,23 +6,47 @@
  * (utils/elo-trueskill2-engine.js). Outputs a restore-compatible JSON backup.
  *
  * Usage:
- *   node elo-rebuild.js <matchlog.jsonl> <backup.json> [output.json] [--apply-quit-penalty]
+ *   node elo-rebuild.js <matchlog.jsonl> <backup.json> [output.json] [--params=params.json] [--apply-quit-penalty] [--party-case-sensitive] [--party-max-edit-distance=N] [--ignore-tags=A,B]
  *
  * - matchlog.jsonl  Source of truth for all match outcomes + participants
  * - backup.json     Existing backup — used only to preserve steamID/discordID
  * - output.json     Output path (default: elo-rebuilt-<timestamp>.json)
+ * - --params=params.json  trueskill2 parameter overrides for the replay.
+ *                   Accepts the bare block ({ "beta": 7.5, ... }) or a full
+ *                   plugin-options snippet ({ "trueskill2": {...} }) — the
+ *                   calibrator's "paste into config" output works verbatim.
+ *                   MUST mirror the live plugin's trueskill2 config, else
+ *                   the rebuilt ratings diverge from live scoring. Default:
+ *                   neutral parameters (classic TrueSkill).
  * - --apply-quit-penalty  Apply the TrueSkill2 quit factor to quit-flagged
  *                   log entries (default off, mirroring the plugin's
  *                   enableQuitPenalty default)
+ * - --party-case-sensitive          Clan-tag matching is case-sensitive
+ *                   (default off). Must mirror the live plugin's
+ *                   partyCaseSensitive config so replay parity holds.
+ * - --party-max-edit-distance=N     Levenshtein merge distance for
+ *                   near-duplicate clan tags (default 0 = exact match
+ *                   only; raising it can fuse different clans into one
+ *                   phantom party). Must mirror the live plugin's
+ *                   partyMaxEditDistance config so replay parity holds.
+ * - --ignore-tags=A,B               Comma-separated clan tags to treat as
+ *                   public (community tags). Default empty. Must mirror
+ *                   the live plugin's partyIgnoredTags config so replay
+ *                   parity holds.
  *
  * The output is drop-in compatible with !elo restore.
  *
  * Notes on TrueSkill2 replay:
  * - With neutral default parameters this reproduces the legacy replay
  *   bit-for-bit (regression-tested in testing/test-elo-rebuild.js).
+ * - Party size/clan tag PREFER the exact value logged by the live plugin
+ *   (post-feature records carry `partySize`/`clanTag` per player, already
+ *   accounting for sub-threshold/ineligible teammates). Only when those
+ *   fields are ABSENT (pre-feature logs) is party size recomputed from the
+ *   logged player names — which then sees ELIGIBLE players only.
  * - Records written before the TrueSkill2 upgrade carry no
- *   kills/deaths/squad/quit fields — those factors are simply inert for
- *   such rounds. New records replay with full observations.
+ *   kills/deaths/quit fields — those factors are simply inert for such
+ *   rounds. New records replay with full observations.
  * - `experience` is taken from the replay state (roundsPlayed so far), not
  *   from the logged experienceBefore, so partial logs stay self-consistent.
  */
@@ -32,7 +56,7 @@ import * as readline from 'readline';
 import { fileURLToPath } from 'url';
 import { computeRoundUpdate } from '../utils/elo-trueskill2-engine.js';
 import { loadParameters } from '../utils/elo-parameters.js';
-import { buildPerPlayerMetaFromLog } from '../utils/elo-calibration-utils.js';
+import { computePartySizes } from '../utils/elo-clan-grouping.js';
 
 // ─── Replay core ─────────────────────────────────────────────────────────────
 
@@ -53,13 +77,15 @@ async function loadMatches(jsonlPath) {
  * @param {string} matchlogPath   path to the production elo-match-log.jsonl
  * @param {string|null} backupPath  optional backup JSON for steamID/discordID
  * @param {Object} paramOverrides   loadParameters() overrides (neutral default)
- * @param {Object} options          { applyQuitPenalty?: boolean, quiet?: boolean }
+ * @param {Object} options          { applyQuitPenalty?: boolean, quiet?: boolean,
+ *                                    partyOptions?: {caseSensitive, maxEditDistance, ignoredTags} }
  * @returns {{ players: Map, parameters: Object, processed: number, skipped: number }}
  */
 export async function rebuildFromLog(matchlogPath, backupPath = null, paramOverrides = {}, options = {}) {
   const parameters = loadParameters(paramOverrides);
   const applyQuitPenalty = options.applyQuitPenalty ?? false;
   const quiet = options.quiet ?? true;
+  const partyOptions = options.partyOptions ?? {};
 
   const matches = await loadMatches(matchlogPath);
 
@@ -127,11 +153,32 @@ export async function rebuildFromLog(matchlogPath, backupPath = null, paramOverr
 
     // Per-player TrueSkill2 observations from the log. Old records lack these
     // fields entirely — the corresponding factors stay inert for those rounds.
-    const perPlayerMeta = buildPerPlayerMetaFromLog(
-      match,
-      (eosID) => players.get(eosID).roundsPlayed,
-      applyQuitPenalty
-    );
+    const roundDurationMin = (match.roundDuration ?? 0) / 60000;
+    // Name-based fallback grouping is only needed for pre-feature records; if
+    // every player carries the live-logged partySize, skip the recompute.
+    // ponytail: logged values are authoritative and thus uncorrectable; add a
+    // --recompute-party override the first time logged party data turns out
+    // wrong (e.g. a community tag discovered after weeks of logging).
+    const partyByEos = match.players.some(pl => pl.partySize == null)
+      ? computePartySizes(
+          match.players.map(pl => ({ eosID: pl.eosID, name: pl.name, teamID: pl.teamID })),
+          partyOptions
+        )
+      : null;
+    const perPlayerMeta = {};
+    for (const p of match.players) {
+      // Prefer the exact value the live plugin logged; only recompute from
+      // names (partyByEos) when the log predates the partySize/clanTag fields.
+      perPlayerMeta[p.eosID] = {
+        clanTag: p.clanTag ?? (partyByEos?.get(p.eosID)?.clanTag ?? null),
+        partySize: p.partySize ?? (partyByEos?.get(p.eosID)?.partySize ?? 1),
+        experience: players.get(p.eosID).roundsPlayed,
+        kills: p.kills,
+        deaths: p.deaths,
+        timePlayedMin: roundDurationMin * (p.participationRatio ?? 1),
+        quit: applyQuitPenalty ? (p.quit ?? false) : false
+      };
+    }
 
     const { team1Updates, team2Updates } = computeRoundUpdate(
       t1Ratings, t2Ratings, match.outcome, perPlayerMeta, parameters
@@ -140,16 +187,14 @@ export async function rebuildFromLog(matchlogPath, backupPath = null, paramOverr
     const isTeam1Winner = match.outcome === 'team1win';
     const isTeam2Winner = match.outcome === 'team2win';
 
-    // Apply scaled updates
+    // Apply updates (participation scaling happens inside the engine)
     const applyUpdates = (matchPlayers, updates, isWinner, isLoser) => {
       matchPlayers.forEach((mp, i) => {
         const state = players.get(mp.eosID);
         const { deltaMu, deltaSigma } = updates[i];
-        const scaled_dMu    = deltaMu    * mp.participationRatio;
-        const scaled_dSigma = deltaSigma * mp.participationRatio;
 
-        state.mu           = state.mu + scaled_dMu;
-        state.sigma        = Math.max(state.sigma - scaled_dSigma, 0.5);
+        state.mu           = state.mu + deltaMu;
+        state.sigma        = Math.max(state.sigma - deltaSigma, 0.5);
         state.roundsPlayed += 1;
         state.wins         += isWinner ? 1 : 0;
         state.losses       += isLoser  ? 1 : 0;
@@ -171,21 +216,65 @@ export async function rebuildFromLog(matchlogPath, backupPath = null, paramOverr
 // ─── CLI ─────────────────────────────────────────────────────────────────────
 
 async function main() {
-  const args = process.argv.slice(2).filter(a => a !== '--apply-quit-penalty');
   const applyQuitPenalty = process.argv.includes('--apply-quit-penalty');
+  const partyCaseSensitive = process.argv.includes('--party-case-sensitive');
+  const edArg = process.argv.find(a => a.startsWith('--party-max-edit-distance='));
+  // Reject malformed values instead of letting NaN silently disable merging.
+  const parseEditDistance = (raw) => {
+    const n = Number(raw);
+    if (!Number.isInteger(n) || n < 0) {
+      console.error(`Invalid --party-max-edit-distance value: "${raw}" (expected a non-negative integer)`);
+      process.exit(1);
+    }
+    return n;
+  };
+  const partyMaxEditDistance = edArg ? parseEditDistance(edArg.split('=')[1]) : 0;
+  const igArg = process.argv.find(a => a.startsWith('--ignore-tags='));
+  const partyIgnoredTags = igArg ? igArg.split('=')[1].split(',').map(s => s.trim()).filter(Boolean) : [];
+
+  // --params=<file>: the live trueskill2 parameter overrides, so the replay
+  // scores exactly like a calibrated production plugin. Accepts either the
+  // bare trueskill2 block or a full plugin-options snippet containing one
+  // (i.e. the calibrator's "paste into config" output works verbatim).
+  // Validation happens in loadParameters — invalid values abort loudly.
+  const paramsArg = process.argv.find(a => a.startsWith('--params='));
+  let paramOverrides = {};
+  if (paramsArg) {
+    const paramsPath = paramsArg.split('=')[1];
+    try {
+      paramOverrides = JSON.parse(fs.readFileSync(paramsPath, 'utf8'));
+    } catch (err) {
+      console.error(`Cannot read --params file "${paramsPath}": ${err.message}`);
+      process.exit(1);
+    }
+    if (paramOverrides && typeof paramOverrides === 'object' && paramOverrides.trueskill2) {
+      paramOverrides = paramOverrides.trueskill2;
+    }
+  }
+
+  const args = process.argv.slice(2).filter(a =>
+    a !== '--apply-quit-penalty' &&
+    a !== '--party-case-sensitive' &&
+    !a.startsWith('--party-max-edit-distance=') &&
+    !a.startsWith('--ignore-tags=') &&
+    !a.startsWith('--params='));
   const matchlogPath = args[0];
   const backupPath = args[1];
   const outputArg = args[2];
 
   if (!matchlogPath || !backupPath) {
-    console.error('Usage: node elo-rebuild.js <matchlog.jsonl> <backup.json> [output.json] [--apply-quit-penalty]');
+    console.error('Usage: node elo-rebuild.js <matchlog.jsonl> <backup.json> [output.json] [--params=params.json] [--apply-quit-penalty] [--party-case-sensitive] [--party-max-edit-distance=N] [--ignore-tags=A,B]');
     process.exit(1);
   }
 
   const outputPath = outputArg ?? `elo-rebuilt-${Date.now()}.json`;
 
   const { players, parameters, processed, skipped } = await rebuildFromLog(
-    matchlogPath, backupPath, {}, { applyQuitPenalty, quiet: false }
+    matchlogPath, backupPath, paramOverrides, {
+      applyQuitPenalty,
+      quiet: false,
+      partyOptions: { caseSensitive: partyCaseSensitive, maxEditDistance: partyMaxEditDistance, ignoredTags: partyIgnoredTags }
+    }
   );
 
   console.log(`\nDone. Processed: ${processed}, Skipped: ${skipped}`);

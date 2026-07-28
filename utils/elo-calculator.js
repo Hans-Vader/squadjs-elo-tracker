@@ -36,7 +36,7 @@
  * - The MU_DEFAULT, SIGMA_DEFAULT, BETA, and TAU constants form a
  *   mathematically interdependent set. If you wish to change the scale of
  *   the system, you must update all constants proportionally.
- * - TrueSkill2 factors (squad offset, experience, quit, kill/death) are
+ * - TrueSkill2 factors (party offset, experience, quit, kill/death) are
  *   reachable only through computeRoundUpdate() in the engine — this
  *   facade always runs with neutral parameters plus the constants below.
  *
@@ -94,7 +94,8 @@ export default class EloCalculator {
       tau: this.TAU,
       drawProbability: this.DRAW_PROBABILITY
     });
-    return computeRoundUpdate(team1, team2, outcome, {}, parameters);
+    // Legacy contract: RAW deltas, caller scales by participationRatio.
+    return computeRoundUpdate(team1, team2, outcome, {}, parameters, { scaleTeamDeltaByRatio: false });
   }
 
   /**

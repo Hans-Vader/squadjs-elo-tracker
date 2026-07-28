@@ -7,48 +7,37 @@
  * search, minimising weighted log-loss.
  *
  * Stage 1: classic BETA × TAU sweep (unchanged objective/diagnostics).
- * Stage 2: TrueSkill2 sweep of the parameters worth tuning at this data
- *          scale — quitParams.mQ, experienceOffsets[0] (new-player drift,
- *          decaying to 0 by 50 games), squadOffsets[3] (4-stack boost) and
- *          ONE individual-performance strength λ — run at the stage-1
- *          winner's BETA/TAU. Each dimension only activates when the log
- *          actually contains the corresponding observations (quit flags /
- *          squad sizes / count stats); zero is always in the grid so
- *          "feature off" can win.
- *          Count-stat weights (kills, deaths, revives) are NOT swept
- *          independently — three free dimensions on ~100 outcomes would
- *          fit noise. Instead one λ scales all three, with per-stat
- *          weights derived from exposure-weighted log statistics (see
- *          utils/elo-calibration-utils.js for the formulas, including the
- *          mandatory wOpponent intercept that absorbs each stat's base
- *          rate). λ = "a player 1β above average produces λ SDs more of
- *          every stat" — one SD of medic performance carries exactly as
- *          much rating information as one SD of shooter performance.
+ * Stage 2: TrueSkill2 sweep of the three parameters worth tuning at this
+ *          data scale — quitParams.mQ, experienceOffsets[0] (new-player
+ *          drift, decaying to 0 by 50 games) and partyOffsets[3]
+ *          (4-stack boost) — run at the stage-1 winner's BETA/TAU.
+ *          Each dimension only activates when the log actually contains
+ *          the corresponding observations (quit flags / clan parties);
+ *          zero is always in the grid so "feature off" can win.
+ *          Kill/death weights are deliberately NOT swept — they need far
+ *          more data than a single server produces; leave them neutral.
  *
  * Usage: node elo-calibrate.js <matchlog.jsonl> <db-backup.json>
  */
 
 import readline from 'readline';
 import fs from 'fs';
+import { fileURLToPath } from 'url';
 import EloCalculator from '../utils/elo-calculator.js';
 import { computeRoundUpdate } from '../utils/elo-trueskill2-engine.js';
-import { loadParameters } from '../utils/elo-parameters.js';
-import {
-  COUNT_STATS,
-  MIN_STAT_SAMPLES,
-  MIN_STAT_ROUNDS,
-  buildPerPlayerMetaFromLog,
-  computeStatNormalization,
-  buildCountParams
-} from '../utils/elo-calibration-utils.js';
+import { loadParameters, partyOffsetAt } from '../utils/elo-parameters.js';
+import { computePartySizes } from '../utils/elo-clan-grouping.js';
 
-const jsonlPath = process.argv[2];
-const dbPath    = process.argv[3];
-
-if (!jsonlPath || !dbPath) {
-  console.error('Usage: node elo-calibrate.js <matchlog.jsonl> <db-backup.json>');
-  process.exit(1);
+// Reject malformed values instead of letting NaN silently disable merging.
+function parseEditDistance(raw) {
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 0) {
+    console.error(`Invalid --party-max-edit-distance value: "${raw}" (expected a non-negative integer)`);
+    process.exit(1);
+  }
+  return n;
 }
+
 
 // --- Constants ---
 const RATED_MIN_GAMES    = 5;
@@ -71,51 +60,53 @@ const TAU_STEP  = 0.02;  // coarser too — same reason
 const CALIBRATION_LAMBDA  = 200;
 const CALIBRATION_EPSILON = 1e-6;
 
-// --- Load DB synchronously ---
-const db = JSON.parse(fs.readFileSync(dbPath));
+// Player DB backup (eosID → player row); filled by main() before the replay.
 const playerDB = new Map();
-for (const p of db.players) playerDB.set(p.eosID, p);
 
-// --- Stream and parse match log ---
-const matches = [];
-
-const rl = readline.createInterface({
-  input: fs.createReadStream(jsonlPath),
-  crlfDelay: Infinity
-});
-
-rl.on('line', (line) => {
-  line = line.trim();
-  if (!line) return;
+/**
+ * Parse one JSONL match-log line into the calibrator's match shape, or null
+ * if the line is unusable (blank, malformed, draw, one-sided). Exported for
+ * testing. roundDuration MUST survive — the engine gates the kill/death
+ * factor on timePlayedMin > 0, so dropping it silently disables that factor
+ * in every calibration replay.
+ */
+export function parseMatchLine(line, partyOptions) {
+  line = (line ?? '').trim();
+  if (!line) return null;
 
   let match;
   try { match = JSON.parse(line); }
-  catch { return; }
+  catch { return null; }
 
   const { players, outcome, endedAt, matchId, roundDuration } = match;
 
-  if (!players || !outcome || outcome === 'draw') return;
+  if (!players || !outcome || outcome === 'draw') return null;
   const team1 = players.filter(p => p.teamID === 1);
   const team2 = players.filter(p => p.teamID === 2);
-  if (!team1.length || !team2.length) return;
+  if (!team1.length || !team2.length) return null;
 
-  matches.push({ matchId, endedAt, outcome, roundDuration, players, team1, team2 });
-});
+  const parsedMatch = { matchId, endedAt, outcome, roundDuration, players, team1, team2 };
+  // Name-based fallback grouping is only needed for pre-feature records; if
+  // every player carries the live-logged partySize, skip the recompute.
+  parsedMatch.partyByEos = players.some(pl => pl.partySize == null)
+    ? computePartySizes(
+        players.map(pl => ({ eosID: pl.eosID, name: pl.name, teamID: pl.teamID })),
+        partyOptions
+      )
+    : null;
+  return parsedMatch;
+}
 
 // --- Win probability ---
-// `parameters` is a loadParameters() object; squadOffsets shift the predicted
+// `parameters` is a loadParameters() object; partyOffsets shift the predicted
 // team means exactly as in the engine (paper eq. 7 applies to matchmaking
-// predictions too). `perPlayerMeta` supplies squad sizes when available.
+// predictions too). `perPlayerMeta` supplies party sizes when available.
 function winProbability(team1, team2, parameters, perPlayerMeta = {}) {
   const BETA = parameters.beta;
   const getRatio = (p) => p.participationRatio ?? 1.0;
 
-  const squadShiftOf = (p) => {
-    const offsets = parameters.squadOffsets;
-    const size = perPlayerMeta[p.eosID]?.squadSize ?? 1;
-    const idx = Math.min(Math.max(size - 1, 0), offsets.length - 1);
-    return offsets[idx] ?? 0;
-  };
+  const partyShiftOf = (p) =>
+    partyOffsetAt(parameters.partyOffsets, perPlayerMeta[p.eosID]?.partySize ?? 1);
 
   let effectiveN1  = team1.reduce((s, p) => s + getRatio(p), 0);
   let effectiveN2  = team2.reduce((s, p) => s + getRatio(p), 0);
@@ -126,8 +117,8 @@ function winProbability(team1, team2, parameters, perPlayerMeta = {}) {
   effectiveN1 *= scale1;
   effectiveN2 *= scale2;
 
-  const teamMu1      = team1.reduce((s, p) => s + (p.mu + squadShiftOf(p)) * getRatio(p), 0) * scale1;
-  const teamMu2      = team2.reduce((s, p) => s + (p.mu + squadShiftOf(p)) * getRatio(p), 0) * scale2;
+  const teamMu1      = team1.reduce((s, p) => s + (p.mu + partyShiftOf(p)) * getRatio(p), 0) * scale1;
+  const teamMu2      = team2.reduce((s, p) => s + (p.mu + partyShiftOf(p)) * getRatio(p), 0) * scale2;
 
   const teamSigmaSq1 = team1.reduce((s, p) => s + (p.sigma * p.sigma + BETA * BETA) * getRatio(p), 0) * scale1;
   const teamSigmaSq2 = team2.reduce((s, p) => s + (p.sigma * p.sigma + BETA * BETA) * getRatio(p), 0) * scale2;
@@ -160,16 +151,35 @@ function replayMatches(matches, overrides = {}, options = {}) {
   for (const match of matches) {
     const { matchId, outcome, weight, team1, team2 } = match;
 
-    const t1ratings = team1.map(p => ({ eosID: p.eosID, mu: getRating(p.eosID).mu, sigma: getRating(p.eosID).sigma }));
-    const t2ratings = team2.map(p => ({ eosID: p.eosID, mu: getRating(p.eosID).mu, sigma: getRating(p.eosID).sigma }));
+    // participationRatio must reach the engine: it weights the team aggregates
+    // AND scales the team-factor delta internally (mirrors the live plugin).
+    const ratioByEos = new Map(match.players.map(p => [p.eosID, p.participationRatio ?? 1]));
+    const toRating = p => ({
+      eosID: p.eosID,
+      mu: getRating(p.eosID).mu,
+      sigma: getRating(p.eosID).sigma,
+      participationRatio: ratioByEos.get(p.eosID) ?? 1
+    });
+    const t1ratings = team1.map(toRating);
+    const t2ratings = team2.map(toRating);
 
     // TrueSkill2 observations from the log (absent on pre-upgrade records —
     // the corresponding factors stay inert for those rounds).
-    const perPlayerMeta = buildPerPlayerMetaFromLog(
-      match,
-      (eosID) => getRating(eosID).roundsPlayed,
-      applyQuit
-    );
+    const durMin = (match.roundDuration ?? 0) / 60000;
+    const perPlayerMeta = {};
+    for (const p of match.players) {
+      // Prefer the exact value the live plugin logged; only recompute from
+      // names (partyByEos) when the log predates the partySize/clanTag fields.
+      perPlayerMeta[p.eosID] = {
+        clanTag: p.clanTag ?? (match.partyByEos?.get(p.eosID)?.clanTag ?? null),
+        partySize: p.partySize ?? (match.partyByEos?.get(p.eosID)?.partySize ?? 1),
+        experience: getRating(p.eosID).roundsPlayed,
+        kills: p.kills,
+        deaths: p.deaths,
+        timePlayedMin: durMin * (p.participationRatio ?? 1),
+        quit: applyQuit ? (p.quit ?? false) : false
+      };
+    }
 
     const pTeam1 = Math.min(0.999, Math.max(0.001, winProbability(t1ratings, t2ratings, parameters, perPlayerMeta)));
     const p      = outcome === 'team1win' ? pTeam1 : 1 - pTeam1;
@@ -177,13 +187,12 @@ function replayMatches(matches, overrides = {}, options = {}) {
 
     const { team1Updates, team2Updates } = computeRoundUpdate(t1ratings, t2ratings, outcome, perPlayerMeta, parameters);
 
+    // Participation scaling happens inside the engine (team factor only).
     const applyUpdates = (players, updates) => {
       for (let i = 0; i < players.length; i++) {
-        const matchPlayer = match.players.find(p => p.eosID === players[i].eosID);
-        const ratio       = matchPlayer?.participationRatio ?? 1;
         const rating      = getRating(players[i].eosID);
-        rating.mu        += updates[i].deltaMu    * ratio;
-        rating.sigma      = Math.max(rating.sigma - updates[i].deltaSigma * ratio, 0.5);
+        rating.mu        += updates[i].deltaMu;
+        rating.sigma      = Math.max(rating.sigma - updates[i].deltaSigma, 0.5);
         rating.roundsPlayed += 1;
       }
     };
@@ -284,47 +293,39 @@ function gridSearch(matches) {
 }
 
 // --- Stage 2: TrueSkill2 sweep at fixed BETA/TAU ---
-function ts2GridSearch(matches, BETA, TAU, norm) {
+function ts2GridSearch(matches, BETA, TAU) {
   const hasQuit  = matches.some(m => m.players.some(p => p.quit === true));
-  const hasSquad = matches.some(m => m.players.some(p => (p.squadSize ?? 1) > 1));
-  const countStats = COUNT_STATS.filter(({ stat }) => norm[stat]).map(({ stat }) => stat);
-  const hasCounts  = countStats.length > 0;
+  const hasParty = matches.some(m => m.players.some(p => (p.partySize ?? m.partyByEos?.get(p.eosID)?.partySize ?? 1) > 1));
 
   const mQs = hasQuit  ? [0, -1.0, -2.083, -3.0] : [0];   // 0 ⇒ quit factor off (applyQuit=false)
   const e0s = [0, 0.1, 0.2, 0.4];                          // new-player drift, decays to 0 by game 50
-  const s4s = hasSquad ? [0, 0.5, 0.83, 1.2] : [0];        // 4-stack boost
-  const ls  = hasCounts ? [0, 0.25, 0.5, 1.0] : [0];       // individual-performance strength λ
+  const s4s = hasParty ? [0, 0.5, 0.83, 1.2] : [0];        // 4-stack party boost
 
-  if (!hasQuit)   console.log('  (no quit flags in log — skipping mQ sweep)');
-  if (!hasSquad)  console.log('  (no squad sizes in log — skipping squadOffset sweep)');
-  if (!hasCounts) console.log('  (no usable count stats in log — skipping λ sweep)');
-  else console.log(`  (λ sweep over: ${countStats.join(', ')})`);
+  if (!hasQuit)  console.log('  (no quit flags in log — skipping mQ sweep)');
+  if (!hasParty) console.log('  (no clan parties in log — skipping partyOffset sweep)');
 
   const results = [];
-  const total = mQs.length * e0s.length * s4s.length * ls.length;
+  const total = mQs.length * e0s.length * s4s.length;
   let n = 0;
 
   for (const mQ of mQs) {
     for (const e0 of e0s) {
       for (const s4 of s4s) {
-        for (const lambda of ls) {
-          n++;
-          process.stdout.write(`\rTS2 sweep mQ=${mQ} e0=${e0} s4=${s4} λ=${lambda} (${n}/${total})...`);
-          const experienceOffsets = Array.from({ length: 200 }, (_, i) => (i < 50 ? e0 * (1 - i / 50) : 0));
-          // Linear squad-offset curve anchored at the swept 4-stack value
-          const squadOffsets = Array.from({ length: 10 }, (_, i) => (i < 1 ? 0 : (s4 / 3) * i));
-          const overrides = {
-            beta: BETA,
-            tau: TAU,
-            experienceOffsets,
-            squadOffsets,
-            quitParams: { mQ: mQ === 0 ? -2.083 : mQ, vQ: 1.0 },
-            ...(lambda !== 0 ? buildCountParams(lambda, norm, BETA) : {})
-          };
-          const { totalLoss, adjustedLoss, calibPenalty, games } =
-            replayMatches(matches, overrides, { applyQuit: hasQuit && mQ !== 0 });
-          results.push({ mQ, e0, s4, lambda, totalLoss, adjustedLoss, calibPenalty, games });
-        }
+        n++;
+        process.stdout.write(`\rTS2 sweep mQ=${mQ} e0=${e0} s4=${s4} (${n}/${total})...`);
+        const experienceOffsets = Array.from({ length: 200 }, (_, i) => (i < 50 ? e0 * (1 - i / 50) : 0));
+        // Linear party-offset curve anchored at the swept 4-stack value
+        const partyOffsets = Array.from({ length: 10 }, (_, i) => (i < 1 ? 0 : (s4 / 3) * i));
+        const overrides = {
+          beta: BETA,
+          tau: TAU,
+          experienceOffsets,
+          partyOffsets,
+          quitParams: { mQ: mQ === 0 ? -2.083 : mQ, vQ: 1.0 }
+        };
+        const { totalLoss, adjustedLoss, calibPenalty, games } =
+          replayMatches(matches, overrides, { applyQuit: hasQuit && mQ !== 0 });
+        results.push({ mQ, e0, s4, totalLoss, adjustedLoss, calibPenalty, games });
       }
     }
   }
@@ -356,8 +357,8 @@ function diagBuckets(games, label) {
   console.log(`Avg predicted P(team1): ${avgP}\n`);
 }
 
-// --- Main ---
-rl.on('close', () => {
+// --- Calibration pipeline (runs once the CLI has parsed the whole log) ---
+function runCalibration(matches) {
   matches.sort((a, b) => a.endedAt - b.endedAt);
 
   for (const match of matches) {
@@ -420,69 +421,20 @@ rl.on('close', () => {
   const bestBeta = top10[0].BETA;
   const bestTau  = top10[0].TAU;
   console.log(`\n=== STAGE 2: TRUESKILL2 SWEEP (BETA=${bestBeta}, TAU=${bestTau}) ===\n`);
+  const ts2Results = ts2GridSearch(matches, bestBeta, bestTau);
 
-  const norm = computeStatNormalization(matches);
-  console.log(`Count-stat normalisation (exposure-weighted per-minute rates, ${norm.totalRounds} rounds):`);
-  for (const { stat } of COUNT_STATS) {
-    const s = norm[stat];
-    if (s) {
-      console.log(
-        `  ${stat.padEnd(8)} mean=${s.mean.toFixed(4)} sd=${s.sd.toFixed(4)} tp̄=${s.tpBar.toFixed(1)}min ` +
-        `(n=${s.n}, rounds=${s.rounds}/${norm.totalRounds})`
-      );
-      if (s.rounds < norm.totalRounds * 0.9) {
-        console.log(
-          `  ${' '.repeat(8)} ⚠ present in only ${s.rounds}/${norm.totalRounds} rounds — the λ fit is dominated ` +
-          `by the better-covered stats; treat this stat's emitted params as weakly validated`
-        );
-      }
-    } else {
-      console.log(
-        `  ${stat.padEnd(8)} — insufficient observations ` +
-        `(need ≥${MIN_STAT_SAMPLES} samples over ≥${MIN_STAT_ROUNDS} rounds), excluded from λ bundle`
-      );
-    }
-  }
-  console.log('');
-
-  const ts2Results = ts2GridSearch(matches, bestBeta, bestTau, norm);
-
-  console.log(`\n${'Rank'.padEnd(6)} ${'mQ'.padEnd(8)} ${'exp0'.padEnd(8)} ${'squad4'.padEnd(8)} ${'λ'.padEnd(8)} ${'RawLoss'.padEnd(12)} ${'AdjLoss'.padEnd(12)} ${'Acc%'}`);
-  console.log('─'.repeat(72));
+  console.log(`\n${'Rank'.padEnd(6)} ${'mQ'.padEnd(8)} ${'exp0'.padEnd(8)} ${'party4'.padEnd(8)} ${'RawLoss'.padEnd(12)} ${'AdjLoss'.padEnd(12)} ${'Acc%'}`);
+  console.log('─'.repeat(64));
   for (let i = 0; i < Math.min(10, ts2Results.length); i++) {
     const r = ts2Results[i];
     const acc = (r.games.filter(g => g.correct).length / r.games.length * 100).toFixed(1);
     console.log(
-      `${String(i + 1).padEnd(6)} ${String(r.mQ).padEnd(8)} ${String(r.e0).padEnd(8)} ${String(r.s4).padEnd(8)} ${String(r.lambda).padEnd(8)} ` +
+      `${String(i + 1).padEnd(6)} ${String(r.mQ).padEnd(8)} ${String(r.e0).padEnd(8)} ${String(r.s4).padEnd(8)} ` +
       `${r.totalLoss.toFixed(2).padEnd(12)} ${r.adjustedLoss.toFixed(2).padEnd(12)} ${acc}`
     );
   }
 
-  // λ sensitivity: best adjusted loss per λ value (results are loss-sorted,
-  // so the first hit per λ is its best).
-  const lambdas = [...new Set(ts2Results.map(r => r.lambda))].sort((a, b) => a - b);
-  if (lambdas.length > 1) {
-    console.log('\nBest per λ:');
-    for (const l of lambdas) {
-      const b = ts2Results.find(r => r.lambda === l);
-      const acc = (b.games.filter(g => g.correct).length / b.games.length * 100).toFixed(1);
-      console.log(`  λ=${String(l).padEnd(5)} adjLoss=${b.adjustedLoss.toFixed(2)} rawLoss=${b.totalLoss.toFixed(2)} acc=${acc}%`);
-    }
-  }
-
   const best = ts2Results[0];
-  // λ is a calibration-time concept — the plugin only knows the params, so
-  // the recommended config carries the computed weights, not λ itself.
-  const bestCountParams = best.lambda !== 0 ? buildCountParams(best.lambda, norm, bestBeta) : {};
-  // Significant-figure rounding: toFixed() would round tiny weights to 0,
-  // silently disabling (wPlayer) or drastically strengthening (variance)
-  // the factor relative to what the sweep actually validated.
-  const sig = (x) => Number(x.toPrecision(6));
-  const roundParams = (p) => p && {
-    wPlayer: sig(p.wPlayer),
-    wOpponent: sig(p.wOpponent),
-    variance: sig(p.variance)
-  };
   console.log(`\nRecommended plugin config (paste into the EloTracker options):\n`);
   console.log(JSON.stringify({
     trueskill2: {
@@ -492,19 +444,56 @@ rl.on('close', () => {
         experienceOffsets: Array.from({ length: 50 }, (_, i) => parseFloat((best.e0 * (1 - i / 50)).toFixed(4)))
       }),
       ...(best.s4 !== 0 && {
-        squadOffsets: Array.from({ length: 10 }, (_, i) => parseFloat((i < 1 ? 0 : (best.s4 / 3) * i).toFixed(4)))
+        partyOffsets: Array.from({ length: 10 }, (_, i) => parseFloat((i < 1 ? 0 : (best.s4 / 3) * i).toFixed(4)))
       }),
-      ...(best.mQ !== 0 && { quitParams: { mQ: best.mQ, vQ: 1.0 } }),
-      ...(bestCountParams.killParams && { killParams: roundParams(bestCountParams.killParams) }),
-      ...(bestCountParams.deathParams && { deathParams: roundParams(bestCountParams.deathParams) }),
-      ...(bestCountParams.reviveParams && { reviveParams: roundParams(bestCountParams.reviveParams) })
+      ...(best.mQ !== 0 && { quitParams: { mQ: best.mQ, vQ: 1.0 } })
     },
     ...(best.mQ !== 0 && { enableQuitPenalty: true })
   }, null, 2));
-  if (best.lambda !== 0) {
-    console.log(`(λ=${best.lambda}: a player 1β above average is expected to produce ${best.lambda} SD more of each stat per round.)`);
-  }
-  if (best.mQ === 0 && best.e0 === 0 && best.s4 === 0 && best.lambda === 0) {
+  if (best.mQ === 0 && best.e0 === 0 && best.s4 === 0) {
     console.log('(All TrueSkill2 factors calibrate to OFF on this log — keep neutral defaults.)');
   }
-});
+}
+
+// --- CLI ---
+function main() {
+  // Flags may appear anywhere; positionals are everything that is not a flag.
+  const positionals = process.argv.slice(2).filter(a => !a.startsWith('--'));
+  const jsonlPath = positionals[0];
+  const dbPath    = positionals[1];
+
+  if (!jsonlPath || !dbPath) {
+    console.error('Usage: node elo-calibrate.js <matchlog.jsonl> <db-backup.json> [--party-case-sensitive] [--party-max-edit-distance=N] [--ignore-tags=A,B]');
+    process.exit(1);
+  }
+
+  const partyOptions = {
+    caseSensitive: process.argv.includes('--party-case-sensitive'),
+    maxEditDistance: (() => {
+      const a = process.argv.find(x => x.startsWith('--party-max-edit-distance='));
+      return a ? parseEditDistance(a.split('=')[1]) : 0;
+    })(),
+    ignoredTags: (() => {
+      const a = process.argv.find(x => x.startsWith('--ignore-tags='));
+      return a ? a.split('=')[1].split(',').map(s => s.trim()).filter(Boolean) : [];
+    })()
+  };
+
+  const db = JSON.parse(fs.readFileSync(dbPath));
+  for (const p of db.players) playerDB.set(p.eosID, p);
+
+  const matches = [];
+  const rl = readline.createInterface({
+    input: fs.createReadStream(jsonlPath),
+    crlfDelay: Infinity
+  });
+  rl.on('line', (line) => {
+    const m = parseMatchLine(line, partyOptions);
+    if (m) matches.push(m);
+  });
+  rl.on('close', () => runCalibration(matches));
+}
+
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  main();
+}

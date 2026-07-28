@@ -32,11 +32,19 @@ export default async function runEngineTests(runTest) {
     fs.readFileSync(path.join(__dirname, 'fixtures/team-update-goldens.json'), 'utf8')
   );
 
-  await runTest('Goldens: engine reproduces ORIGINAL TrueSkill1 outputs (20 scenarios)', async () => {
+  await runTest('Goldens: engine output = legacy golden deltas × participationRatio (20 scenarios)', async () => {
+    // The engine applies participation scaling internally (team factor only);
+    // the goldens pin the legacy UNSCALED deltas, so the expected value is
+    // golden × ratio — for full-participation players that is the golden itself.
+    const scaleExpected = (updates, team) => updates.map((u, i) => ({
+      ...u,
+      deltaMu: u.deltaMu * (team[i].participationRatio ?? 1),
+      deltaSigma: u.deltaSigma * (team[i].participationRatio ?? 1)
+    }));
     for (const { name, input, expected } of fixture.goldens) {
       const result = computeRoundUpdate(input.team1, input.team2, input.outcome, {}, DEFAULT_PARAMETERS);
-      assertUpdatesMatch(result.team1Updates, expected.team1Updates, `${name} team1`);
-      assertUpdatesMatch(result.team2Updates, expected.team2Updates, `${name} team2`);
+      assertUpdatesMatch(result.team1Updates, scaleExpected(expected.team1Updates, input.team1), `${name} team1`);
+      assertUpdatesMatch(result.team2Updates, scaleExpected(expected.team2Updates, input.team2), `${name} team2`);
     }
   });
 
@@ -78,7 +86,7 @@ export default async function runEngineTests(runTest) {
   });
 
   await runTest('Tail guard (A5): v/w return asymptotes instead of 0 on cdf underflow', async () => {
-    // t - e = -40: cdf underflows to exactly 0 with the A&S erf approximation.
+    // t - e = -40: exp(-z²) underflows to exactly 0 (below ~ -38.6).
     const vVal = gauss.v(-40, 0);
     if (!nearlyEqual(vVal, 40, 1e-6)) throw new Error(`v(-40,0) should approach e - t = 40, got ${vVal}`);
     const wVal = gauss.w(-40, 0);
@@ -88,23 +96,109 @@ export default async function runEngineTests(runTest) {
     if (!(vMid > 0) || !Number.isFinite(vMid)) throw new Error(`v(-2,0.1) invalid: ${vMid}`);
   });
 
+  await runTest('Tail: cdf negative tail is relative-accurate (no cancellation quantization)', async () => {
+    // Reference values from an independent erfc continued-fraction evaluation
+    // (~1e-13 relative). The old 0.5·(1+erf(x)) form quantized these to a few
+    // multiples of machine epsilon (garbage below ~ -7.5, exactly 0 below -8.4).
+    const refs = [
+      [-8, 6.220961e-16],
+      [-12, 1.776482e-33],
+      [-20, 2.753624e-89]
+    ];
+    for (const [x, ref] of refs) {
+      const got = gauss.cdf(x);
+      const relErr = Math.abs(got - ref) / ref;
+      if (!(relErr <= 1e-5)) {
+        throw new Error(`cdf(${x}): got ${got}, reference ${ref} (rel err ${relErr})`);
+      }
+    }
+  });
+
+  await runTest('Tail: w accurate and inside [0,1] across the former garbage band', async () => {
+    // Independent reference values (erfc continued fraction). The old cdf gave
+    // w(-7.5,0)=0.46, w(-8,0)=2.27, w(-8.3,0)=-3.2 — including the WRONG SIGN,
+    // which flips the sigma-update direction.
+    const refs = [
+      [-7, 0.98173809],
+      [-7.5, 0.98388026],
+      [-8, 0.98567512],
+      [-8.3, 0.98661503]
+    ];
+    for (const [t, ref] of refs) {
+      const got = gauss.w(t, 0);
+      if (!nearlyEqual(got, ref, 1e-4)) {
+        throw new Error(`w(${t},0): got ${got}, reference ${ref}`);
+      }
+    }
+    // Full sweep: w must never leave [0,1], v must stay finite and positive.
+    for (let t = -38; t <= 0; t += 0.05) {
+      const wv = gauss.w(t, 0);
+      const vv = gauss.v(t, 0);
+      if (!(wv >= 0 && wv <= 1)) throw new Error(`w(${t},0) out of [0,1]: ${wv}`);
+      if (!(vv >= 0) || !Number.isFinite(vv)) throw new Error(`v(${t},0) invalid: ${vv}`);
+    }
+  });
+
+  // --- Participation scaling (inside the engine, team factor only) ---
+
+  await runTest('Participation: team update scaled inside the engine (legacy convention)', async () => {
+    // Teammates with identical ratings receive identical team messages; only
+    // the participation ratio differs, so the applied deltas must differ by
+    // exactly that ratio.
+    const t1 = [
+      { eosID: 'half', mu: 25, sigma: 8.333, participationRatio: 0.5 },
+      { eosID: 'full', mu: 25, sigma: 8.333, participationRatio: 1.0 }
+    ];
+    const t2 = [
+      { eosID: 'o1', mu: 25, sigma: 8.333, participationRatio: 1.0 },
+      { eosID: 'o2', mu: 25, sigma: 8.333, participationRatio: 1.0 }
+    ];
+    const r = computeRoundUpdate(t1, t2, 'team1win', {}, DEFAULT_PARAMETERS);
+    const [half, full] = r.team1Updates;
+    if (!nearlyEqual(half.deltaMu, full.deltaMu * 0.5)) {
+      throw new Error(`deltaMu not ratio-scaled: half=${half.deltaMu}, full=${full.deltaMu}`);
+    }
+    if (!nearlyEqual(half.deltaSigma, full.deltaSigma * 0.5)) {
+      throw new Error(`deltaSigma not ratio-scaled: half=${half.deltaSigma}, full=${full.deltaSigma}`);
+    }
+  });
+
+  await runTest('Participation: quit penalty NOT diluted by ratio (gradient not inverted)', async () => {
+    // The quit factor is a per-event observation — an early quitter (low
+    // participation ratio) must NOT receive a milder penalty than a late one.
+    const QUIT = loadParameters({ quitParams: { mQ: -3, vQ: 1 } });
+    const quitContribution = (ratio) => {
+      const t1 = [{ eosID: 'q', mu: 25, sigma: 8.333, participationRatio: ratio }];
+      const t2 = [{ eosID: 'o', mu: 25, sigma: 8.333, participationRatio: 1 }];
+      const withQuit = computeRoundUpdate(t1, t2, 'team2win', { q: { quit: true } }, QUIT).team1Updates[0].deltaMu;
+      const withoutQuit = computeRoundUpdate(t1, t2, 'team2win', {}, QUIT).team1Updates[0].deltaMu;
+      return withQuit - withoutQuit;
+    };
+    const early = quitContribution(0.2);
+    const late = quitContribution(0.45);
+    if (!(early < 0)) throw new Error(`quit contribution must be negative, got ${early}`);
+    if (Math.abs(early) < 0.85 * Math.abs(late)) {
+      throw new Error(`early quitter penalized milder: ${early} vs ${late} — gradient inverted`);
+    }
+  });
+
   // --- Squad-offset factor (paper eq. 7) ---
 
-  const TUNED_SQUAD = loadParameters({
-    squadOffsets: [0, 0, 0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5]
+  const TUNED_PARTY = loadParameters({
+    partyOffsets: [0, 0, 0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5]
   });
   const four = (prefix) =>
     Array.from({ length: 4 }, (_, i) => ({ eosID: `${prefix}${i}`, mu: 25, sigma: 8.333, participationRatio: 1 }));
   const squadMeta = () => {
     const meta = {};
-    for (let i = 0; i < 4; i++) meta[`t1_${i}`] = { squadSize: 4 };
-    for (let i = 0; i < 4; i++) meta[`t2_${i}`] = { squadSize: 1 };
+    for (let i = 0; i < 4; i++) meta[`t1_${i}`] = { partySize: 4 };
+    for (let i = 0; i < 4; i++) meta[`t2_${i}`] = { partySize: 1 };
     return meta;
   };
 
-  await runTest('Squad offset: 4-stack favoured — smaller gain on win', async () => {
-    const baseline = computeRoundUpdate(four('t1_'), four('t2_'), 'team1win', {}, TUNED_SQUAD);
-    const withSquads = computeRoundUpdate(four('t1_'), four('t2_'), 'team1win', squadMeta(), TUNED_SQUAD);
+  await runTest('Party offset: 4-stack favoured — smaller gain on win', async () => {
+    const baseline = computeRoundUpdate(four('t1_'), four('t2_'), 'team1win', {}, TUNED_PARTY);
+    const withSquads = computeRoundUpdate(four('t1_'), four('t2_'), 'team1win', squadMeta(), TUNED_PARTY);
     if (withSquads.team1Updates[0].deltaMu >= baseline.team1Updates[0].deltaMu) {
       throw new Error(
         `favoured squad should gain less on win: ${withSquads.team1Updates[0].deltaMu} vs ${baseline.team1Updates[0].deltaMu}`
@@ -112,47 +206,47 @@ export default async function runEngineTests(runTest) {
     }
   });
 
-  await runTest('Squad offset: 4-stack favoured — bigger loss on defeat', async () => {
-    const baseline = computeRoundUpdate(four('t1_'), four('t2_'), 'team2win', {}, TUNED_SQUAD);
-    const withSquads = computeRoundUpdate(four('t1_'), four('t2_'), 'team2win', squadMeta(), TUNED_SQUAD);
+  await runTest('Party offset: 4-stack favoured — bigger loss on defeat', async () => {
+    const baseline = computeRoundUpdate(four('t1_'), four('t2_'), 'team2win', {}, TUNED_PARTY);
+    const withSquads = computeRoundUpdate(four('t1_'), four('t2_'), 'team2win', squadMeta(), TUNED_PARTY);
     if (withSquads.team1Updates[0].deltaMu >= baseline.team1Updates[0].deltaMu) {
       throw new Error('favoured squad losing must yield a more-negative deltaMu');
     }
   });
 
-  await runTest('Squad offset: solos (size 1) exactly match baseline', async () => {
+  await runTest('Party offset: solos (size 1) exactly match baseline', async () => {
     const t1 = [{ eosID: 'a', mu: 25, sigma: 8.333, participationRatio: 1 }];
     const t2 = [{ eosID: 'b', mu: 25, sigma: 8.333, participationRatio: 1 }];
-    const baseline = computeRoundUpdate(t1, t2, 'team1win', {}, TUNED_SQUAD);
-    const withMeta = computeRoundUpdate(t1, t2, 'team1win', { a: { squadSize: 1 }, b: { squadSize: 1 } }, TUNED_SQUAD);
+    const baseline = computeRoundUpdate(t1, t2, 'team1win', {}, TUNED_PARTY);
+    const withMeta = computeRoundUpdate(t1, t2, 'team1win', { a: { partySize: 1 }, b: { partySize: 1 } }, TUNED_PARTY);
     if (Math.abs(baseline.team1Updates[0].deltaMu - withMeta.team1Updates[0].deltaMu) > 1e-9) {
-      throw new Error('squadSize=1 must match baseline exactly (squadOffsets[0] === 0)');
+      throw new Error('partySize=1 must match baseline exactly (partyOffsets[0] === 0)');
     }
   });
 
-  await runTest('Squad offset: neutral DEFAULT_PARAMETERS ignore squadSize', async () => {
+  await runTest('Party offset: neutral DEFAULT_PARAMETERS ignore partySize', async () => {
     const t1 = [{ eosID: 'a', mu: 25, sigma: 8.333, participationRatio: 1 }];
     const t2 = [{ eosID: 'b', mu: 25, sigma: 8.333, participationRatio: 1 }];
     const r0 = computeRoundUpdate(t1, t2, 'team1win', {}, DEFAULT_PARAMETERS);
-    const r1 = computeRoundUpdate(t1, t2, 'team1win', { a: { squadSize: 9 }, b: { squadSize: 1 } }, DEFAULT_PARAMETERS);
+    const r1 = computeRoundUpdate(t1, t2, 'team1win', { a: { partySize: 9 }, b: { partySize: 1 } }, DEFAULT_PARAMETERS);
     if (Math.abs(r0.team1Updates[0].deltaMu - r1.team1Updates[0].deltaMu) > 1e-9) {
-      throw new Error('with neutral DEFAULT_PARAMETERS, squadSize must have no effect');
+      throw new Error('with neutral DEFAULT_PARAMETERS, partySize must have no effect');
     }
   });
 
-  await runTest('Squad offset: oversized squadSize clamps to last offset entry', async () => {
+  await runTest('Party offset: oversized partySize clamps to last offset entry', async () => {
     const t1 = four('t1_');
     const t2 = four('t2_');
     const metaAt10 = squadMeta();
     const metaAt99 = squadMeta();
     for (let i = 0; i < 4; i++) {
-      metaAt10[`t1_${i}`] = { squadSize: 10 };
-      metaAt99[`t1_${i}`] = { squadSize: 99 };
+      metaAt10[`t1_${i}`] = { partySize: 10 };
+      metaAt99[`t1_${i}`] = { partySize: 99 };
     }
-    const r10 = computeRoundUpdate(t1, t2, 'team1win', metaAt10, TUNED_SQUAD);
-    const r99 = computeRoundUpdate(t1, t2, 'team1win', metaAt99, TUNED_SQUAD);
+    const r10 = computeRoundUpdate(t1, t2, 'team1win', metaAt10, TUNED_PARTY);
+    const r99 = computeRoundUpdate(t1, t2, 'team1win', metaAt99, TUNED_PARTY);
     if (Math.abs(r10.team1Updates[0].deltaMu - r99.team1Updates[0].deltaMu) > 1e-12) {
-      throw new Error('squadSize beyond the offset table must clamp to the last entry');
+      throw new Error('partySize beyond the offset table must clamp to the last entry');
     }
   });
 
@@ -306,7 +400,7 @@ export default async function runEngineTests(runTest) {
     const t1 = [{ eosID: 'a', mu: 25, sigma: 8.333, participationRatio: 1 }];
     const t2 = [{ eosID: 'b', mu: 25, sigma: 8.333, participationRatio: 1 }];
     const baseline = computeRoundUpdate(t1, t2, 'team1win', {}, TUNED_KD);
-    const withEmptyMeta = computeRoundUpdate(t1, t2, 'team1win', { a: { squadSize: 1 }, b: { squadSize: 1 } }, TUNED_KD);
+    const withEmptyMeta = computeRoundUpdate(t1, t2, 'team1win', { a: { partySize: 1 }, b: { partySize: 1 } }, TUNED_KD);
     if (Math.abs(baseline.team1Updates[0].deltaMu - withEmptyMeta.team1Updates[0].deltaMu) > 1e-9) {
       throw new Error('meta without kills/timePlayedMin must not change the update');
     }
@@ -323,70 +417,6 @@ export default async function runEngineTests(runTest) {
     );
     if (Math.abs(r0.team1Updates[0].deltaMu - r1.team1Updates[0].deltaMu) > 1e-9) {
       throw new Error('neutral DEFAULT_PARAMETERS must ignore kill/death stats');
-    }
-  });
-
-  // --- Revive individual-statistics factor (eq. 9, c = revive) ---
-
-  const TUNED_REVIVE = loadParameters({
-    reviveParams: { wPlayer: 0.05, wOpponent: 0, variance: 0.5 }
-  });
-
-  await runTest('Revive factor: busy medic gains more than no-revive teammate on the same win', async () => {
-    const t1 = [
-      { eosID: 'M', mu: 25, sigma: 8.333, participationRatio: 1 },
-      { eosID: 'N', mu: 25, sigma: 8.333, participationRatio: 1 }
-    ];
-    const t2 = four('e').slice(0, 2);
-    const meta = {
-      M: { revives: 12, timePlayedMin: 40 },
-      N: { revives: 0, timePlayedMin: 40 }
-    };
-    const r = computeRoundUpdate(t1, t2, 'team1win', meta, TUNED_REVIVE);
-    if (r.team1Updates[0].deltaMu <= r.team1Updates[1].deltaMu) {
-      throw new Error('medic with 12 revives must gain more than teammate with 0');
-    }
-    // Zero revives with an active weight takes the censored path — no throw,
-    // and the update stays finite.
-    if (!Number.isFinite(r.team1Updates[1].deltaMu) || !Number.isFinite(r.team1Updates[1].deltaSigma)) {
-      throw new Error('censored zero-revive update must stay finite');
-    }
-  });
-
-  await runTest('Revive factor: busy medic loses less on the same defeat', async () => {
-    const t1 = [
-      { eosID: 'M', mu: 25, sigma: 8.333, participationRatio: 1 },
-      { eosID: 'N', mu: 25, sigma: 8.333, participationRatio: 1 }
-    ];
-    const t2 = four('e').slice(0, 2);
-    const meta = {
-      M: { revives: 12, timePlayedMin: 40 },
-      N: { revives: 0, timePlayedMin: 40 }
-    };
-    const r = computeRoundUpdate(t1, t2, 'team2win', meta, TUNED_REVIVE);
-    if (r.team1Updates[0].deltaMu <= r.team1Updates[1].deltaMu) {
-      throw new Error('medic must lose less than the no-revive teammate on the same loss');
-    }
-  });
-
-  await runTest('Revive factor: neutral DEFAULT_PARAMETERS ignore revives (golden parity)', async () => {
-    const t1 = [{ eosID: 'a', mu: 25, sigma: 8.333, participationRatio: 1 }];
-    const t2 = [{ eosID: 'b', mu: 25, sigma: 8.333, participationRatio: 1 }];
-    const r0 = computeRoundUpdate(t1, t2, 'team1win', {}, DEFAULT_PARAMETERS);
-    const r1 = computeRoundUpdate(
-      t1, t2, 'team1win',
-      { a: { revives: 15, timePlayedMin: 40 }, b: { revives: 0, timePlayedMin: 40 } },
-      DEFAULT_PARAMETERS
-    );
-    if (Math.abs(r0.team1Updates[0].deltaMu - r1.team1Updates[0].deltaMu) > 1e-9) {
-      throw new Error('neutral DEFAULT_PARAMETERS must ignore revive stats');
-    }
-    // Old log records without a revives field must also stay inert under
-    // TUNED params (Number.isFinite guard).
-    const r2 = computeRoundUpdate(t1, t2, 'team1win', { a: { squadSize: 1, timePlayedMin: 40 } }, TUNED_REVIVE);
-    const r3 = computeRoundUpdate(t1, t2, 'team1win', {}, TUNED_REVIVE);
-    if (Math.abs(r2.team1Updates[0].deltaMu - r3.team1Updates[0].deltaMu) > 1e-9) {
-      throw new Error('missing revives field must leave the update at baseline');
     }
   });
 
