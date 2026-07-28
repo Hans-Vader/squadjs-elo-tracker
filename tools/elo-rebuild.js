@@ -32,6 +32,7 @@ import * as readline from 'readline';
 import { fileURLToPath } from 'url';
 import { computeRoundUpdate } from '../utils/elo-trueskill2-engine.js';
 import { loadParameters } from '../utils/elo-parameters.js';
+import { buildPerPlayerMetaFromLog } from '../utils/elo-calibration-utils.js';
 
 // ─── Replay core ─────────────────────────────────────────────────────────────
 
@@ -126,19 +127,11 @@ export async function rebuildFromLog(matchlogPath, backupPath = null, paramOverr
 
     // Per-player TrueSkill2 observations from the log. Old records lack these
     // fields entirely — the corresponding factors stay inert for those rounds.
-    const roundDurationMin = (match.roundDuration ?? 0) / 60000;
-    const perPlayerMeta = {};
-    for (const p of match.players) {
-      perPlayerMeta[p.eosID] = {
-        squadID: p.squadID ?? 0,
-        squadSize: p.squadSize ?? 1,
-        experience: players.get(p.eosID).roundsPlayed,
-        kills: p.kills,
-        deaths: p.deaths,
-        timePlayedMin: roundDurationMin * (p.participationRatio ?? 1),
-        quit: applyQuitPenalty ? (p.quit ?? false) : false
-      };
-    }
+    const perPlayerMeta = buildPerPlayerMetaFromLog(
+      match,
+      (eosID) => players.get(eosID).roundsPlayed,
+      applyQuitPenalty
+    );
 
     const { team1Updates, team2Updates } = computeRoundUpdate(
       t1Ratings, t2Ratings, match.outcome, perPlayerMeta, parameters

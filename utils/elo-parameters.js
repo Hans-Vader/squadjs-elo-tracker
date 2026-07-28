@@ -72,6 +72,18 @@ function buildDefaults() {
       variance: 1.0
     },
 
+    // --- Revive factor (eq. 9, c = revive; not in the paper's Halo set) ---
+    // Same count-factor machinery as kills/deaths, fed by PLAYER_REVIVED.
+    // Deliberate design choice: revives also reward ROLE (medics), not just
+    // raw skill — that is wanted here. Calibrate via elo-calibrate.js, which
+    // ties all three count weights to one strength parameter normalised by
+    // each stat's observed per-minute spread (equal information per SD).
+    reviveParams: {
+      wPlayer: 0.0,
+      wOpponent: 0.0,
+      variance: 1.0
+    },
+
     // --- Quit factor (eq. 12; deterministic-quit limit of eq. 13) ---
     // Implemented as the paper's online "mini-game" interpretation (p.18):
     // a quit is one extra one-sided observation perf_i − perf_o_i < m_q.

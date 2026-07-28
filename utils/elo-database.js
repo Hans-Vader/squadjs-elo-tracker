@@ -66,6 +66,19 @@ import Sequelize from 'sequelize';
 import Logger from '../../core/logger.js';
 import EloCalculator from './elo-calculator.js';
 
+// TrueSkill2 observation columns on Elo_RoundPlayers. Single source for both
+// the model definition and the additive migration (_ensureTrueSkill2Columns)
+// so a new stat cannot be added to one and forgotten in the other.
+const TRUESKILL2_COLUMNS = {
+  squadID: { type: Sequelize.INTEGER, allowNull: true },
+  squadSize: { type: Sequelize.INTEGER, allowNull: true },
+  kills: { type: Sequelize.INTEGER, allowNull: false, defaultValue: 0 },
+  deaths: { type: Sequelize.INTEGER, allowNull: false, defaultValue: 0 },
+  revives: { type: Sequelize.INTEGER, allowNull: false, defaultValue: 0 },
+  quit: { type: Sequelize.BOOLEAN, allowNull: false, defaultValue: false },
+  experienceBefore: { type: Sequelize.INTEGER, allowNull: true }
+};
+
 export default class EloDatabase {
   constructor(server, options, connectors) {
     this.server = server;
@@ -290,34 +303,8 @@ export default class EloDatabase {
              type: Sequelize.FLOAT,
              allowNull: false
            },
-           // --- TrueSkill2 observation columns (additive; see ensureTrueSkill2Columns) ---
-           squadID: {
-             type: Sequelize.INTEGER,
-             allowNull: true
-           },
-           squadSize: {
-             type: Sequelize.INTEGER,
-             allowNull: true
-           },
-           kills: {
-             type: Sequelize.INTEGER,
-             allowNull: false,
-             defaultValue: 0
-           },
-           deaths: {
-             type: Sequelize.INTEGER,
-             allowNull: false,
-             defaultValue: 0
-           },
-           quit: {
-             type: Sequelize.BOOLEAN,
-             allowNull: false,
-             defaultValue: false
-           },
-           experienceBefore: {
-             type: Sequelize.INTEGER,
-             allowNull: true
-           }
+           // --- TrueSkill2 observation columns (additive; see _ensureTrueSkill2Columns) ---
+           ...TRUESKILL2_COLUMNS
          },
          { timestamps: false, tableName: 'Elo_RoundPlayers', charset: 'utf8mb4', collate: 'utf8mb4_unicode_ci' }
        );
@@ -377,16 +364,7 @@ export default class EloDatabase {
     const desc = await queryInterface.describeTable('Elo_RoundPlayers').catch(() => null);
     if (!desc) return; // table absent — nothing to migrate
 
-    const columns = {
-      squadID: { type: Sequelize.INTEGER, allowNull: true },
-      squadSize: { type: Sequelize.INTEGER, allowNull: true },
-      kills: { type: Sequelize.INTEGER, allowNull: false, defaultValue: 0 },
-      deaths: { type: Sequelize.INTEGER, allowNull: false, defaultValue: 0 },
-      quit: { type: Sequelize.BOOLEAN, allowNull: false, defaultValue: false },
-      experienceBefore: { type: Sequelize.INTEGER, allowNull: true }
-    };
-
-    for (const [name, spec] of Object.entries(columns)) {
+    for (const [name, spec] of Object.entries(TRUESKILL2_COLUMNS)) {
       if (!desc[name]) {
         await queryInterface.addColumn('Elo_RoundPlayers', name, spec);
         Logger.verbose('EloTracker', 1, `[DB] Migration: added column Elo_RoundPlayers.${name}`);

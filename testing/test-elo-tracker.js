@@ -171,9 +171,11 @@ export default async function runTrackerTests(runTest) {
     const { server, tracker } = await makeTrackerForTest();
     if (!server.listeners['PLAYER_WOUNDED']) throw new Error('PLAYER_WOUNDED listener missing after mount');
     if (!server.listeners['PLAYER_DIED']) throw new Error('PLAYER_DIED listener missing after mount');
+    if (!server.listeners['PLAYER_REVIVED']) throw new Error('PLAYER_REVIVED listener missing after mount');
     await tracker.unmount();
     if (server.listeners['PLAYER_WOUNDED']) throw new Error('PLAYER_WOUNDED listener not removed on unmount');
     if (server.listeners['PLAYER_DIED']) throw new Error('PLAYER_DIED listener not removed on unmount');
+    if (server.listeners['PLAYER_REVIVED']) throw new Error('PLAYER_REVIVED listener not removed on unmount');
   });
 
   await runTest('TS2 options: quit gate defaults off, params frozen & neutral', async () => {
@@ -227,16 +229,55 @@ export default async function runTrackerTests(runTest) {
     if (tracker.deathsByEosID.get('c') !== 1) throw new Error('Teamkill/environment victim death must still count');
   });
 
+  await runTest('Revives: PLAYER_REVIVED credits the reviver; missing reviver ignored', async () => {
+    const { server, tracker } = await makeTrackerForTest();
+    const medic = { eosID: 'm', teamID: 1 };
+    const downed = { eosID: 'v', teamID: 1 };
+
+    await server.emit('PLAYER_REVIVED', { victim: downed, attacker: { eosID: 'e', teamID: 2 }, reviver: medic });
+    await server.emit('PLAYER_REVIVED', { victim: downed, attacker: { eosID: 'e', teamID: 2 }, reviver: medic });
+    await server.emit('PLAYER_REVIVED', { victim: downed, attacker: null, reviver: null });
+
+    if (tracker.revivesByEosID.get('m') !== 2) throw new Error(`Medic should have 2 revives, got ${tracker.revivesByEosID.get('m')}`);
+    if (tracker.revivesByEosID.size !== 1) throw new Error('Null reviver must not be counted');
+  });
+
+  await runTest('Revives: teamkill-undo, cross-team, self and attacker revives give no credit', async () => {
+    const { server, tracker } = await makeTrackerForTest();
+    const mate = { eosID: 'mate', teamID: 1 };
+    const victim = { eosID: 'v', teamID: 1 };
+    const enemy = { eosID: 'e', teamID: 2 };
+
+    // Teamkill-down + revive (the farming loop): attacker on victim's team
+    await server.emit('PLAYER_REVIVED', { victim, attacker: mate, reviver: { eosID: 'medic', teamID: 1 } });
+    // Cross-team revive: reviver not on the victim's team
+    await server.emit('PLAYER_REVIVED', { victim, attacker: enemy, reviver: { eosID: 'e2', teamID: 2 } });
+    // Reviver revives the player they downed themselves
+    await server.emit('PLAYER_REVIVED', { victim, attacker: { eosID: 'medic', teamID: 1 }, reviver: { eosID: 'medic', teamID: 1 } });
+    // Self-revive artefact
+    await server.emit('PLAYER_REVIVED', { victim, attacker: enemy, reviver: victim });
+
+    if (tracker.revivesByEosID.size !== 0) {
+      throw new Error(`No revive credit expected, got ${JSON.stringify([...tracker.revivesByEosID])}`);
+    }
+
+    // Legitimate revive still counts
+    await server.emit('PLAYER_REVIVED', { victim, attacker: enemy, reviver: { eosID: 'medic', teamID: 1 } });
+    if (tracker.revivesByEosID.get('medic') !== 1) throw new Error('legitimate revive must still be credited');
+  });
+
   await runTest('Kills/Deaths: maps cleared on NEW_GAME', async () => {
     const { server, tracker } = await makeTrackerForTest();
     await server.emit('PLAYER_WOUNDED', { victim: { eosID: 'v', teamID: 2 }, attacker: { eosID: 'k', teamID: 1 }, teamkill: false, time: 1000 });
     await server.emit('PLAYER_DIED', { victim: { eosID: 'v', teamID: 2 }, attacker: { eosID: 'k', teamID: 1 }, time: 1500 });
+    await server.emit('PLAYER_REVIVED', { victim: { eosID: 'v', teamID: 2 }, attacker: { eosID: 'k', teamID: 1 }, reviver: { eosID: 'm', teamID: 2 } });
     tracker.lastSeenByEosID.set('v', 1500);
 
     await server.emit('NEW_GAME', {});
 
     if (tracker.killsByEosID.size !== 0) throw new Error('killsByEosID must be cleared on NEW_GAME');
     if (tracker.deathsByEosID.size !== 0) throw new Error('deathsByEosID must be cleared on NEW_GAME');
+    if (tracker.revivesByEosID.size !== 0) throw new Error('revivesByEosID must be cleared on NEW_GAME');
     if (tracker.lastSeenByEosID.size !== 0) throw new Error('lastSeenByEosID must be cleared on NEW_GAME');
   });
 
@@ -350,6 +391,7 @@ export default async function runTrackerTests(runTest) {
     tracker.eloCache.set('p3', { mu: 25, sigma: 8.333, roundsPlayed: 3, wins: 2, losses: 1 });
     tracker.killsByEosID.set('p1', 5);
     tracker.deathsByEosID.set('p1', 2);
+    tracker.revivesByEosID.set('p1', 4);
 
     await server.emit('ROUND_ENDED', { winner: { team: '1', tickets: 200 }, loser: { team: '2', tickets: 50 } });
 
@@ -357,6 +399,7 @@ export default async function runTrackerTests(runTest) {
     const logP1 = capturedLog.players.find((p) => p.eosID === 'p1');
     if (logP1.kills !== 5) throw new Error(`log kills expected 5, got ${logP1.kills}`);
     if (logP1.deaths !== 2) throw new Error(`log deaths expected 2, got ${logP1.deaths}`);
+    if (logP1.revives !== 4) throw new Error(`log revives expected 4, got ${logP1.revives}`);
     if (logP1.squadID !== 3) throw new Error(`log squadID expected 3, got ${logP1.squadID}`);
     if (logP1.squadSize !== 2) throw new Error(`log squadSize expected 2, got ${logP1.squadSize}`);
     if (logP1.quit !== false) throw new Error(`log quit expected false, got ${logP1.quit}`);
@@ -364,12 +407,13 @@ export default async function runTrackerTests(runTest) {
 
     if (!capturedRows) throw new Error('insertRoundPlayers not called');
     const rowP1 = capturedRows.find((r) => r.eosID === 'p1');
-    if (rowP1.kills !== 5 || rowP1.deaths !== 2 || rowP1.squadID !== 3 || rowP1.squadSize !== 2) {
+    if (rowP1.kills !== 5 || rowP1.deaths !== 2 || rowP1.revives !== 4 || rowP1.squadID !== 3 || rowP1.squadSize !== 2) {
       throw new Error(`DB row TS2 fields wrong: ${JSON.stringify(rowP1)}`);
     }
     if (rowP1.quit !== false || rowP1.experienceBefore !== 12) {
       throw new Error(`DB row quit/experience wrong: ${JSON.stringify(rowP1)}`);
     }
+    if (rowP1.steamID !== 's1') throw new Error(`DB row steamID expected 's1', got ${rowP1.steamID}`);
     const rowP3 = capturedRows.find((r) => r.eosID === 'p3');
     if (rowP3.kills !== 0 || rowP3.deaths !== 0) throw new Error('players without events default to 0 kills/deaths');
   });

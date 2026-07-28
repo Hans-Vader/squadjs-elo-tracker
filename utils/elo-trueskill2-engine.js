@@ -30,7 +30,8 @@ import {
  * @param {Array<{eosID?, mu, sigma, participationRatio?}>} team2
  * @param {'team1win'|'team2win'|'draw'} outcome
  * @param {Object} perPlayerMeta  eosID → { squadSize, squadID, kills, deaths,
- *                                quit, experience, timePlayedMin } (all optional)
+ *                                revives, quit, experience, timePlayedMin }
+ *                                (all optional)
  * @param {Object} parameters     frozen object from elo-parameters.js
  *
  * @returns {{ team1Updates, team2Updates, debug? }}
@@ -102,18 +103,20 @@ export function computeRoundUpdate(team1, team2, outcome, perPlayerMeta, paramet
       messages.push(quitFactorMessage(player, opponentMu, opponentVar, parameters));
     }
 
-    // Kill/death observations (eq. 9) need a play-time to normalize against.
+    // Count observations (eq. 9) need a play-time to normalize against.
     const tp = meta.timePlayedMin;
     if (tp > 0) {
-      if (Number.isFinite(meta.kills)) {
-        messages.push(
-          killDeathFactorMessage(player, meta.kills, opponentMu, opponentVar, tp, parameters.killParams, parameters)
-        );
-      }
-      if (Number.isFinite(meta.deaths)) {
-        messages.push(
-          killDeathFactorMessage(player, meta.deaths, opponentMu, opponentVar, tp, parameters.deathParams, parameters)
-        );
+      const countFactors = [
+        [meta.kills, parameters.killParams],
+        [meta.deaths, parameters.deathParams],
+        [meta.revives, parameters.reviveParams]
+      ];
+      for (const [count, weightParams] of countFactors) {
+        if (Number.isFinite(count)) {
+          messages.push(
+            killDeathFactorMessage(player, count, opponentMu, opponentVar, tp, weightParams, parameters)
+          );
+        }
       }
     }
     return messages;

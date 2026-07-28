@@ -16,3 +16,6 @@
 
 # Docker / local env
 /.env
+./squadreplay-fetcher/*
+./squadreplay-fetcher
+*.sqrx

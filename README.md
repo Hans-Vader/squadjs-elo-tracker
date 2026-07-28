@@ -60,9 +60,10 @@ The rating engine implements **TrueSkill2** (Minka, Cleven & Zaykov 2018, Micros
 | **Squad offset** | eq. 7 | Players in larger in-game squads are expected to perform better; the win/loss update accounts for that expectation. |
 | **Experience offset** | eq. 8 | New players improve fast; a small per-round drift (decaying with rounds played) tracks it. |
 | **Kill/death statistics** | eq. 9 | Per-minute kill and death counts become direct skill observations — good stats soften a loss, poor stats dampen a win. Zero counts use the exact censored update. |
+| **Revive statistics** | eq. 9 (not in the paper's Halo set) | Per-minute revive counts as a third count observation — medics get rewarded like shooters. Deliberately also rewards role choice. |
 | **Quit penalty** | Section 9 | A detected quit is one extra "lost mini-game vs. the enemy team average" observation. |
 
-**All factors ship NEUTRAL (disabled).** Out of the box the engine reproduces the previous TrueSkill behaviour bit-for-bit (regression-tested against golden snapshots). The plugin *records* the new observations from day one — per-player `squadID`, `squadSize`, `kills` (from `PLAYER_WOUNDED` downs), `deaths` (from `PLAYER_DIED`), `quit` and `experienceBefore` land in the match log and, with `enableDatabaseLogging`, in `Elo_RoundPlayers` (columns are added automatically by a startup migration).
+**All factors ship NEUTRAL (disabled).** Out of the box the engine reproduces the previous TrueSkill behaviour bit-for-bit (regression-tested against golden snapshots). The plugin *records* the new observations from day one — per-player `squadID`, `squadSize`, `kills` (from `PLAYER_WOUNDED` downs), `deaths` (from `PLAYER_DIED`), `revives` (from `PLAYER_REVIVED`, credited to the reviver), `quit` and `experienceBefore` land in the match log and, with `enableDatabaseLogging`, in `Elo_RoundPlayers` (columns are added automatically by a startup migration).
 
 Enable factors by calibrating against your own match log (Halo-fitted paper values do not transfer to Squad):
 
@@ -70,11 +71,11 @@ Enable factors by calibrating against your own match log (Halo-fitted paper valu
 node tools/elo-calibrate.js elo-match-log.jsonl db-backup.json
 ```
 
-Stage 1 sweeps BETA/TAU as before; stage 2 sweeps the three TrueSkill2 parameters worth tuning at server scale (`quitParams.mQ`, new-player drift, 4-stack squad boost) and prints a ready-to-paste `trueskill2` config block. New plugin options:
+Stage 1 sweeps BETA/TAU as before; stage 2 sweeps the TrueSkill2 parameters worth tuning at server scale — `quitParams.mQ`, new-player drift, 4-stack squad boost, and **one individual-performance strength λ** that scales kill, death and revive weights together (each normalised by its observed per-minute spread, so one SD of medic performance counts exactly as much as one SD of shooter performance; λ=0 = "off" is always in the grid). It prints a ready-to-paste `trueskill2` config block. New plugin options:
 
 | Option | Default | Meaning |
 |---|---|---|
-| `trueskill2` | `{}` | Engine parameter overrides (`squadOffsets`, `experienceOffsets`, `killParams`, `deathParams`, `quitParams`, `beta`, `tau`, ...) — see `utils/elo-parameters.js`. |
+| `trueskill2` | `{}` | Engine parameter overrides (`squadOffsets`, `experienceOffsets`, `killParams`, `deathParams`, `reviveParams`, `quitParams`, `beta`, `tau`, ...) — see `utils/elo-parameters.js`. |
 | `enableQuitPenalty` | `false` | Apply the quit factor to detected quitters. Leave off until `mQ` is calibrated — quit detection is inference (SquadJS has no reliable disconnect event; ~30 s poll granularity; a crash looks like a rage-quit). |
 | `quitGraceSeconds` | `60` | Absence window after which a below-threshold player counts as departed. |
 | `quitParticipationThreshold` | `0.5` | Participation ratio below which an absent player is flagged as a quitter. |

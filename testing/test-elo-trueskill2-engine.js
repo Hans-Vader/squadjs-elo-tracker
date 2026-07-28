@@ -326,6 +326,70 @@ export default async function runEngineTests(runTest) {
     }
   });
 
+  // --- Revive individual-statistics factor (eq. 9, c = revive) ---
+
+  const TUNED_REVIVE = loadParameters({
+    reviveParams: { wPlayer: 0.05, wOpponent: 0, variance: 0.5 }
+  });
+
+  await runTest('Revive factor: busy medic gains more than no-revive teammate on the same win', async () => {
+    const t1 = [
+      { eosID: 'M', mu: 25, sigma: 8.333, participationRatio: 1 },
+      { eosID: 'N', mu: 25, sigma: 8.333, participationRatio: 1 }
+    ];
+    const t2 = four('e').slice(0, 2);
+    const meta = {
+      M: { revives: 12, timePlayedMin: 40 },
+      N: { revives: 0, timePlayedMin: 40 }
+    };
+    const r = computeRoundUpdate(t1, t2, 'team1win', meta, TUNED_REVIVE);
+    if (r.team1Updates[0].deltaMu <= r.team1Updates[1].deltaMu) {
+      throw new Error('medic with 12 revives must gain more than teammate with 0');
+    }
+    // Zero revives with an active weight takes the censored path — no throw,
+    // and the update stays finite.
+    if (!Number.isFinite(r.team1Updates[1].deltaMu) || !Number.isFinite(r.team1Updates[1].deltaSigma)) {
+      throw new Error('censored zero-revive update must stay finite');
+    }
+  });
+
+  await runTest('Revive factor: busy medic loses less on the same defeat', async () => {
+    const t1 = [
+      { eosID: 'M', mu: 25, sigma: 8.333, participationRatio: 1 },
+      { eosID: 'N', mu: 25, sigma: 8.333, participationRatio: 1 }
+    ];
+    const t2 = four('e').slice(0, 2);
+    const meta = {
+      M: { revives: 12, timePlayedMin: 40 },
+      N: { revives: 0, timePlayedMin: 40 }
+    };
+    const r = computeRoundUpdate(t1, t2, 'team2win', meta, TUNED_REVIVE);
+    if (r.team1Updates[0].deltaMu <= r.team1Updates[1].deltaMu) {
+      throw new Error('medic must lose less than the no-revive teammate on the same loss');
+    }
+  });
+
+  await runTest('Revive factor: neutral DEFAULT_PARAMETERS ignore revives (golden parity)', async () => {
+    const t1 = [{ eosID: 'a', mu: 25, sigma: 8.333, participationRatio: 1 }];
+    const t2 = [{ eosID: 'b', mu: 25, sigma: 8.333, participationRatio: 1 }];
+    const r0 = computeRoundUpdate(t1, t2, 'team1win', {}, DEFAULT_PARAMETERS);
+    const r1 = computeRoundUpdate(
+      t1, t2, 'team1win',
+      { a: { revives: 15, timePlayedMin: 40 }, b: { revives: 0, timePlayedMin: 40 } },
+      DEFAULT_PARAMETERS
+    );
+    if (Math.abs(r0.team1Updates[0].deltaMu - r1.team1Updates[0].deltaMu) > 1e-9) {
+      throw new Error('neutral DEFAULT_PARAMETERS must ignore revive stats');
+    }
+    // Old log records without a revives field must also stay inert under
+    // TUNED params (Number.isFinite guard).
+    const r2 = computeRoundUpdate(t1, t2, 'team1win', { a: { squadSize: 1, timePlayedMin: 40 } }, TUNED_REVIVE);
+    const r3 = computeRoundUpdate(t1, t2, 'team1win', {}, TUNED_REVIVE);
+    if (Math.abs(r2.team1Updates[0].deltaMu - r3.team1Updates[0].deltaMu) > 1e-9) {
+      throw new Error('missing revives field must leave the update at baseline');
+    }
+  });
+
   await runTest('Wrapper honors runtime BETA/TAU mutation (calibrator contract)', async () => {
     const betaBefore = EloCalculator.BETA;
     const tauBefore = EloCalculator.TAU;
