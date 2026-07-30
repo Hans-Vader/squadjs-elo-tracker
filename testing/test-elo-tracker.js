@@ -43,6 +43,7 @@ export default async function runTrackerTests(runTest) {
     startRound: () => {},
     updatePlayers: () => {},
     endRound: () => [],
+    snapshotParticipants: () => [],
     roundStartTime: Date.now()
   });
 
@@ -153,5 +154,436 @@ export default async function runTrackerTests(runTest) {
 
     if (!bulkCalled) throw new Error('Failed to call bulkIncrementPlayerStats');
     if (!historyCalled) throw new Error('Failed to call insertRoundHistory');
+  });
+
+  // --- TrueSkill2 data capture (kills / deaths / quit) ---
+
+  const makeTrackerForTest = async () => {
+    const server = createMockServer();
+    const tracker = new EloTracker(server, mockOptions, mockConnectors);
+    tracker.db = createMockDb();
+    tracker.session = createMockSession();
+    await tracker.mount();
+    return { server, tracker };
+  };
+
+  await runTest('TS2 wiring: kill/death listeners registered and removed symmetrically', async () => {
+    const { server, tracker } = await makeTrackerForTest();
+    if (!server.listeners['PLAYER_WOUNDED']) throw new Error('PLAYER_WOUNDED listener missing after mount');
+    if (!server.listeners['PLAYER_DIED']) throw new Error('PLAYER_DIED listener missing after mount');
+    await tracker.unmount();
+    if (server.listeners['PLAYER_WOUNDED']) throw new Error('PLAYER_WOUNDED listener not removed on unmount');
+    if (server.listeners['PLAYER_DIED']) throw new Error('PLAYER_DIED listener not removed on unmount');
+  });
+
+  await runTest('TS2 options: quit gate defaults off, params frozen & neutral', async () => {
+    const { tracker } = await makeTrackerForTest();
+    if (tracker.options.enableQuitPenalty !== false) throw new Error('enableQuitPenalty must default to false');
+    if (tracker.options.quitGraceSeconds !== 60) throw new Error('quitGraceSeconds must default to 60');
+    if (tracker.options.quitParticipationThreshold !== 0.5) throw new Error('quitParticipationThreshold must default to 0.5');
+    if (!tracker.params || !Object.isFrozen(tracker.params)) throw new Error('tracker.params must be a frozen parameter object');
+    if (tracker.params.beta !== 25.0 / 6.0) throw new Error('tracker.params must carry engine defaults');
+  });
+
+  await runTest('Kills/Deaths: PLAYER_WOUNDED credits kills, PLAYER_DIED counts deaths', async () => {
+    const { server, tracker } = await makeTrackerForTest();
+    const a = { eosID: 'a', teamID: 1 };
+    const b = { eosID: 'b', teamID: 2 };
+
+    // B downs A twice, A downs B once
+    await server.emit('PLAYER_WOUNDED', { victim: a, attacker: b, teamkill: false, time: 1000 });
+    await server.emit('PLAYER_WOUNDED', { victim: a, attacker: b, teamkill: false, time: 2000 });
+    await server.emit('PLAYER_WOUNDED', { victim: b, attacker: a, teamkill: false, time: 3000 });
+    // A gives up twice, B bleeds out once
+    await server.emit('PLAYER_DIED', { victim: a, attacker: b, time: 1500 });
+    await server.emit('PLAYER_DIED', { victim: a, attacker: b, time: 2500 });
+    await server.emit('PLAYER_DIED', { victim: b, attacker: a, time: 3500 });
+
+    if (tracker.killsByEosID.get('a') !== 1) throw new Error(`A should have 1 kill, got ${tracker.killsByEosID.get('a')}`);
+    if (tracker.killsByEosID.get('b') !== 2) throw new Error(`B should have 2 kills, got ${tracker.killsByEosID.get('b')}`);
+    if (tracker.deathsByEosID.get('a') !== 2) throw new Error(`A should have 2 deaths, got ${tracker.deathsByEosID.get('a')}`);
+    if (tracker.deathsByEosID.get('b') !== 1) throw new Error(`B should have 1 death, got ${tracker.deathsByEosID.get('b')}`);
+  });
+
+  await runTest('Kills/Deaths: teamkill / self-wound give no kill credit; deaths still count', async () => {
+    const { server, tracker } = await makeTrackerForTest();
+    const a = { eosID: 'a', teamID: 1 };
+    const c = { eosID: 'c', teamID: 1 };
+
+    // Self-wound (attacker === victim)
+    await server.emit('PLAYER_WOUNDED', { victim: a, attacker: a, teamkill: false, time: 1000 });
+    // Teamkill via explicit flag
+    await server.emit('PLAYER_WOUNDED', { victim: c, attacker: a, teamkill: true, time: 2000 });
+    // Teamkill inferable from equal teamIDs (flag missing)
+    await server.emit('PLAYER_WOUNDED', { victim: c, attacker: a, time: 3000 });
+    // Null attacker (environment / unclaimed)
+    await server.emit('PLAYER_WOUNDED', { victim: c, attacker: null, time: 4000 });
+    // Deaths always count for the victim
+    await server.emit('PLAYER_DIED', { victim: a, attacker: a, time: 1500 });
+    await server.emit('PLAYER_DIED', { victim: c, attacker: null, time: 4500 });
+
+    if (tracker.killsByEosID.size !== 0) throw new Error('No kill credit expected for suicide/teamkill/null attacker');
+    if (tracker.deathsByEosID.get('a') !== 1) throw new Error('Suicide death must still count');
+    if (tracker.deathsByEosID.get('c') !== 1) throw new Error('Teamkill/environment victim death must still count');
+  });
+
+  await runTest('Kills/Deaths: maps cleared on NEW_GAME', async () => {
+    const { server, tracker } = await makeTrackerForTest();
+    await server.emit('PLAYER_WOUNDED', { victim: { eosID: 'v', teamID: 2 }, attacker: { eosID: 'k', teamID: 1 }, teamkill: false, time: 1000 });
+    await server.emit('PLAYER_DIED', { victim: { eosID: 'v', teamID: 2 }, attacker: { eosID: 'k', teamID: 1 }, time: 1500 });
+    tracker.lastSeenByEosID.set('v', 1500);
+
+    await server.emit('NEW_GAME', {});
+
+    if (tracker.killsByEosID.size !== 0) throw new Error('killsByEosID must be cleared on NEW_GAME');
+    if (tracker.deathsByEosID.size !== 0) throw new Error('deathsByEosID must be cleared on NEW_GAME');
+    if (tracker.lastSeenByEosID.size !== 0) throw new Error('lastSeenByEosID must be cleared on NEW_GAME');
+  });
+
+  await runTest('Quit detection: early absent leaver flagged, present player not', async () => {
+    const { tracker } = await makeTrackerForTest();
+
+    // Real session manager with controlled timestamps
+    const EloSessionManager = (await import('../utils/elo-session-manager.js')).default;
+    const session = new EloSessionManager();
+    tracker.session = session;
+
+    session.startRound(10000);
+    session.updatePlayers([
+      { eosID: 'q', name: 'Q', steamID: 'sq', teamID: 1, squadID: 1 },
+      { eosID: 's', name: 'S', steamID: 'ss', teamID: 1, squadID: 1 }
+    ], 10000);
+    // Q leaves at 40s of a 100s round — participation 0.3 < 0.5
+    session.updatePlayers([
+      { eosID: 's', name: 'S', steamID: 'ss', teamID: 1, squadID: 1 }
+    ], 40000);
+
+    tracker.lastSeenByEosID.set('q', 40000);
+    tracker.lastSeenByEosID.set('s', 110000);
+
+    const quitters = tracker._detectQuittersAt(110000);
+    if (!quitters.has('q')) throw new Error('Q (30% participation, absent 70s) should be detected as quitter');
+    if (quitters.has('s')) throw new Error('S (full round, present at end) must NOT be a quitter');
+  });
+
+  await runTest('PerPlayerMeta: partySize by clan tag per team; no tag ⇒ solo', async () => {
+    const { tracker } = await makeTrackerForTest();
+    const participants = [
+      { eosID: 'a', name: '[ACE] Alpha',  assignedTeamID: 1, participationRatio: 1 },
+      { eosID: 'b', name: '[ACE] Bravo',  assignedTeamID: 1, participationRatio: 1 },
+      { eosID: 'c', name: '[ACE] Charlie',assignedTeamID: 1, participationRatio: 0.1 }, // ineligible, still counts
+      { eosID: 'd', name: '[ACE] Delta',  assignedTeamID: 2, participationRatio: 1 },   // same tag, other team
+      { eosID: 'e', name: 'NoClanGuy',    assignedTeamID: 2, participationRatio: 1 }
+    ];
+    const eligible = participants.filter((p) => p.participationRatio >= 0.15);
+    const meta = tracker._buildPerPlayerMeta(participants, eligible);
+
+    if (meta.a.partySize !== 3) throw new Error(`a: party of 3 (incl. ineligible c) expected, got ${meta.a.partySize}`);
+    if (meta.a.clanTag !== 'ACE') throw new Error(`a: clanTag ACE expected, got ${meta.a.clanTag}`);
+    if (meta.d.partySize !== 1) throw new Error(`d: lone ACE on other team must not merge, got ${meta.d.partySize}`);
+    if (meta.e.partySize !== 1 || meta.e.clanTag !== null) throw new Error(`e: no clan ⇒ solo/null`);
+    if (meta.c) throw new Error('ineligible players get no meta entry');
+  });
+
+  await runTest('PerPlayerMeta: experience = pre-round roundsPlayed (new player ⇒ 0)', async () => {
+    const { tracker } = await makeTrackerForTest();
+    tracker.eloCache.set('vet', { mu: 30, sigma: 3, roundsPlayed: 42, wins: 25, losses: 17 });
+    const participants = [
+      { eosID: 'vet', assignedTeamID: 1, dominantSquadID: 0, participationRatio: 1 },
+      { eosID: 'newbie', assignedTeamID: 2, dominantSquadID: 0, participationRatio: 1 }
+    ];
+    const meta = tracker._buildPerPlayerMeta(participants, participants);
+    if (meta.vet.experience !== 42) throw new Error(`vet experience should be 42, got ${meta.vet.experience}`);
+    if (meta.newbie.experience !== 0) throw new Error(`uncached player experience should be 0, got ${meta.newbie.experience}`);
+  });
+
+  await runTest('PerPlayerMeta: quit flag gated by enableQuitPenalty, detection always recorded', async () => {
+    const participants = [
+      { eosID: 'q', assignedTeamID: 1, dominantSquadID: 0, participationRatio: 0.3 },
+      { eosID: 's', assignedTeamID: 1, dominantSquadID: 0, participationRatio: 1 }
+    ];
+    const quitters = new Set(['q']);
+
+    // Default: gate OFF — engine-facing quit stays false, detection recorded.
+    const { tracker } = await makeTrackerForTest();
+    const gatedMeta = tracker._buildPerPlayerMeta(participants, participants, quitters);
+    if (gatedMeta.q.quit !== false) throw new Error('enableQuitPenalty=false must keep engine-facing quit false');
+    if (gatedMeta.q.quitDetected !== true) throw new Error('detected quit must still be recorded');
+    if (gatedMeta.s.quitDetected !== false) throw new Error('non-quitter must not be flagged');
+
+    // Gate ON — engine-facing quit follows detection.
+    const server2 = createMockServer();
+    const tracker2 = new EloTracker(server2, { ...mockOptions, enableQuitPenalty: true }, mockConnectors);
+    tracker2.db = createMockDb();
+    tracker2.session = createMockSession();
+    await tracker2.mount();
+    const openMeta = tracker2._buildPerPlayerMeta(participants, participants, quitters);
+    if (openMeta.q.quit !== true) throw new Error('enableQuitPenalty=true must pass quit through to the engine');
+    if (openMeta.s.quit !== false) throw new Error('non-quitter must stay quit=false');
+  });
+
+  await runTest('Persistence: TS2 fields land in match log and Elo_RoundPlayers rows', async () => {
+    const server = createMockServer();
+    const tracker = new EloTracker(server, { ...mockOptions, enableDatabaseLogging: true }, mockConnectors);
+    const db = createMockDb();
+    let capturedRows = null;
+    db.insertRoundHistory = async () => ({ id: 7 });
+    db.insertRoundPlayers = async (roundHistoryId, endedAt, rows) => { capturedRows = rows; };
+    tracker.db = db;
+
+    const session = createMockSession();
+    session.roundStartTime = 1000;
+    session.endRound = () => [
+      { eosID: 'p1', name: '[XYZ] P1', steamID: 's1', assignedTeamID: 1, dominantSquadID: 3, participationRatio: 1.0 },
+      { eosID: 'p2', name: '[XYZ] P2', steamID: 's2', assignedTeamID: 1, dominantSquadID: 3, participationRatio: 1.0 },
+      { eosID: 'p3', name: 'P3', steamID: 's3', assignedTeamID: 2, dominantSquadID: 0, participationRatio: 1.0 }
+    ];
+    tracker.session = session;
+    await tracker.mount();
+
+    let capturedLog = null;
+    tracker._appendMatchLog = async (record) => { capturedLog = record; };
+
+    server.players = Array(6).fill(0).map((_, i) => ({ eosID: `x${i}`, teamID: (i % 2) + 1 }));
+    tracker.eloCache.set('p1', { mu: 25, sigma: 8.333, roundsPlayed: 12, wins: 6, losses: 6 });
+    tracker.eloCache.set('p2', { mu: 25, sigma: 8.333, roundsPlayed: 0, wins: 0, losses: 0 });
+    tracker.eloCache.set('p3', { mu: 25, sigma: 8.333, roundsPlayed: 3, wins: 2, losses: 1 });
+    tracker.killsByEosID.set('p1', 5);
+    tracker.deathsByEosID.set('p1', 2);
+
+    await server.emit('ROUND_ENDED', { winner: { team: '1', tickets: 200 }, loser: { team: '2', tickets: 50 } });
+
+    if (!capturedLog) throw new Error('match log record not written');
+    const logP1 = capturedLog.players.find((p) => p.eosID === 'p1');
+    if (logP1.kills !== 5) throw new Error(`log kills expected 5, got ${logP1.kills}`);
+    if (logP1.deaths !== 2) throw new Error(`log deaths expected 2, got ${logP1.deaths}`);
+    if (logP1.clanTag !== 'XYZ') throw new Error(`log clanTag expected XYZ, got ${logP1.clanTag}`);
+    if (logP1.partySize !== 2) throw new Error(`log partySize expected 2, got ${logP1.partySize}`);
+    if (logP1.quit !== false) throw new Error(`log quit expected false, got ${logP1.quit}`);
+    if (logP1.experienceBefore !== 12) throw new Error(`log experienceBefore expected 12, got ${logP1.experienceBefore}`);
+
+    if (!capturedRows) throw new Error('insertRoundPlayers not called');
+    const rowP1 = capturedRows.find((r) => r.eosID === 'p1');
+    if (rowP1.kills !== 5 || rowP1.deaths !== 2 || rowP1.partySize !== 2 || rowP1.clanTag !== 'XYZ') {
+      throw new Error(`DB row TS2 fields wrong: ${JSON.stringify(rowP1)}`);
+    }
+    if (rowP1.quit !== false || rowP1.experienceBefore !== 12) {
+      throw new Error(`DB row quit/experience wrong: ${JSON.stringify(rowP1)}`);
+    }
+    const rowP3 = capturedRows.find((r) => r.eosID === 'p3');
+    if (rowP3.kills !== 0 || rowP3.deaths !== 0) throw new Error('players without events default to 0 kills/deaths');
+  });
+
+  await runTest('Match log: params reflect the live config; deltas are the applied values', async () => {
+    const server = createMockServer();
+    const tracker = new EloTracker(
+      server,
+      { ...mockOptions, trueskill2: { beta: 7.5, tau: 0.3, drawProbability: 0.02 } },
+      mockConnectors
+    );
+    const db = createMockDb();
+    let persistedRows = null;
+    db.bulkIncrementPlayerStats = async (rows) => { persistedRows = rows; };
+    tracker.db = db;
+
+    const session = createMockSession();
+    session.roundStartTime = 1000;
+    session.endRound = () => [
+      { eosID: 'p1', name: 'P1', steamID: 's1', assignedTeamID: 1, participationRatio: 0.5 },
+      { eosID: 'p2', name: 'P2', steamID: 's2', assignedTeamID: 2, participationRatio: 1.0 }
+    ];
+    tracker.session = session;
+    await tracker.mount();
+
+    let capturedLog = null;
+    tracker._appendMatchLog = async (record) => { capturedLog = record; };
+
+    server.players = Array(6).fill(0).map((_, i) => ({ eosID: `x${i}`, teamID: (i % 2) + 1 }));
+    tracker.eloCache.set('p1', { mu: 25, sigma: 8.333, roundsPlayed: 5, wins: 3, losses: 2 });
+    tracker.eloCache.set('p2', { mu: 25, sigma: 8.333, roundsPlayed: 5, wins: 2, losses: 3 });
+
+    await server.emit('ROUND_ENDED', { winner: { team: '1', tickets: 200 }, loser: { team: '2', tickets: 50 } });
+
+    if (!capturedLog) throw new Error('match log record not written');
+
+    // Parameter provenance: the log must record what the round was COMPUTED
+    // with (this.params), not the legacy default constants.
+    if (capturedLog.params.beta !== 7.5) {
+      throw new Error(`log params.beta must be the live 7.5, got ${JSON.stringify(capturedLog.params)}`);
+    }
+    if (capturedLog.params.tau !== 0.3) throw new Error(`log params.tau must be 0.3, got ${capturedLog.params.tau}`);
+    if (capturedLog.params.drawProbability !== 0.02) {
+      throw new Error(`log params.drawProbability must be 0.02, got ${capturedLog.params.drawProbability}`);
+    }
+    if (capturedLog.trueskill2Overrides?.beta !== 7.5) {
+      throw new Error('operator trueskill2 overrides must be snapshotted in the record');
+    }
+
+    // Applied-value consistency: since participation scaling moved into the
+    // engine, the log must not scale again — muAfter must equal what was
+    // actually persisted (p1 has ratio 0.5, so double scaling would show here).
+    const p1 = capturedLog.players.find((p) => p.eosID === 'p1');
+    const row1 = persistedRows?.find((r) => r.eosID === 'p1');
+    if (!row1) throw new Error('persisted row for p1 missing');
+    if (Math.abs(p1.muAfter - row1.mu) > 1e-12) {
+      throw new Error(`log muAfter (${p1.muAfter}) must equal the persisted mu (${row1.mu}) — deltas double-scaled`);
+    }
+    if (Math.abs(p1.sigmaAfter - row1.sigma) > 1e-12) {
+      throw new Error(`log sigmaAfter (${p1.sigmaAfter}) must equal the persisted sigma (${row1.sigma})`);
+    }
+    if (Math.abs(p1.muBefore + p1.scaledDeltaMu - p1.muAfter) > 1e-12) {
+      throw new Error('muBefore + scaledDeltaMu must equal muAfter');
+    }
+  });
+
+  await runTest('Cold cache after restart: eligible ratings warmed from DB, not overwritten with defaults', async () => {
+    const server = createMockServer();
+    const tracker = new EloTracker(server, mockOptions, mockConnectors);
+    const db = createMockDb();
+    // The DB holds REAL accumulated ratings; the cache is cold (post-restart,
+    // before the background player-info fetch has warmed it).
+    db.getPlayerStatsBatch = async (ids) => {
+      const m = new Map();
+      for (const id of ids) m.set(id, { mu: 30, sigma: 5, roundsPlayed: 20, wins: 15, losses: 5 });
+      return m;
+    };
+    let persisted = null;
+    db.bulkIncrementPlayerStats = async (rows) => { persisted = rows; };
+    tracker.db = db;
+
+    const session = createMockSession();
+    session.roundStartTime = 1000;
+    session.endRound = () => [
+      { eosID: 'p1', name: 'P1', steamID: 's1', assignedTeamID: 1, participationRatio: 1.0 },
+      { eosID: 'p2', name: 'P2', steamID: 's2', assignedTeamID: 2, participationRatio: 1.0 }
+    ];
+    tracker.session = session;
+    await tracker.mount();
+    let capturedLog = null;
+    tracker._appendMatchLog = async (rec) => { capturedLog = rec; };
+
+    tracker.eloCache.clear(); // simulate the empty post-restart cache
+    server.players = Array(6).fill(0).map((_, i) => ({ eosID: `x${i}`, teamID: (i % 2) + 1 }));
+
+    await server.emit('ROUND_ENDED', { winner: { team: '1', tickets: 200 }, loser: { team: '2', tickets: 50 } });
+
+    if (!persisted) throw new Error('nothing persisted');
+    if (!capturedLog) throw new Error('no match log captured');
+    // The pre-round rating must be p1's REAL DB value (mu 30, sigma 5), proving
+    // the cold cache was warmed from the DB. Without the warm it would be the
+    // 25.0 / 8.333 default — silently overwriting 20 rounds of history.
+    const logP1 = capturedLog.players.find((p) => p.eosID === 'p1');
+    if (Math.abs(logP1.muBefore - 30) > 1e-9) {
+      throw new Error(`cold-cache overwrite: p1 muBefore=${logP1.muBefore} — expected 30 (warmed from DB), not the 25 default`);
+    }
+    if (Math.abs(logP1.sigmaBefore - 5) > 1e-9) {
+      throw new Error(`p1 sigmaBefore=${logP1.sigmaBefore} — expected 5 (warmed), not the 8.333 default`);
+    }
+    // Experience offset must also see the real round count (20), read from the
+    // same cache — proving the warm happens before _buildPerPlayerMeta too.
+    if (logP1.experienceBefore !== 20) {
+      throw new Error(`p1 experienceBefore=${logP1.experienceBefore} — expected 20 (warmed), not 0`);
+    }
+  });
+
+  await runTest('Duplicate ROUND_ENDED: second fire is a no-op; NEW_GAME resets the guard', async () => {
+    const server = createMockServer();
+    const tracker = new EloTracker(server, mockOptions, mockConnectors);
+    const db = createMockDb();
+    let bulkCalls = 0;
+    db.bulkIncrementPlayerStats = async () => { bulkCalls++; };
+    tracker.db = db;
+
+    const session = createMockSession();
+    session.roundStartTime = 1000;
+    session.endRound = () => [
+      { eosID: 'p1', name: 'P1', steamID: 's1', assignedTeamID: 1, participationRatio: 1.0 },
+      { eosID: 'p2', name: 'P2', steamID: 's2', assignedTeamID: 2, participationRatio: 1.0 }
+    ];
+    tracker.session = session;
+    await tracker.mount();
+    tracker._appendMatchLog = async () => {};
+
+    server.players = Array(6).fill(0).map((_, i) => ({ eosID: `x${i}`, teamID: (i % 2) + 1 }));
+    const seed = () => {
+      tracker.eloCache.set('p1', { mu: 25, sigma: 8.333, roundsPlayed: 5, wins: 3, losses: 2 });
+      tracker.eloCache.set('p2', { mu: 25, sigma: 8.333, roundsPlayed: 5, wins: 2, losses: 3 });
+    };
+    seed();
+
+    await server.emit('ROUND_ENDED', { winner: { team: '1', tickets: 200 }, loser: { team: '2', tickets: 50 } });
+    await server.emit('ROUND_ENDED', { winner: { team: '1', tickets: 200 }, loser: { team: '2', tickets: 50 } });
+    if (bulkCalls !== 1) throw new Error(`duplicate ROUND_ENDED double-processed: ${bulkCalls} persistence calls`);
+
+    // NEW_GAME must reset the guard so the next round is processed normally.
+    await server.emit('NEW_GAME', {});
+    seed();
+    await server.emit('ROUND_ENDED', { winner: { team: '1', tickets: 200 }, loser: { team: '2', tickets: 50 } });
+    if (bulkCalls !== 2) throw new Error(`NEW_GAME must reset the processed guard, got ${bulkCalls} total calls`);
+  });
+
+  await runTest('Finite guard: non-finite engine deltas skip the round, nothing persisted', async () => {
+    const server = createMockServer();
+    const tracker = new EloTracker(server, mockOptions, mockConnectors);
+    const db = createMockDb();
+    let bulkCalled = false;
+    db.bulkIncrementPlayerStats = async () => { bulkCalled = true; };
+    tracker.db = db;
+
+    const session = createMockSession();
+    session.roundStartTime = 1000;
+    session.endRound = () => [
+      { eosID: 'p1', name: 'P1', steamID: 's1', assignedTeamID: 1, participationRatio: 1.0 },
+      { eosID: 'p2', name: 'P2', steamID: 's2', assignedTeamID: 2, participationRatio: 1.0 }
+    ];
+    tracker.session = session;
+    await tracker.mount();
+    tracker._appendMatchLog = async () => {};
+
+    server.players = Array(6).fill(0).map((_, i) => ({ eosID: `x${i}`, teamID: (i % 2) + 1 }));
+    tracker.eloCache.set('p1', { mu: 25, sigma: 8.333, roundsPlayed: 5, wins: 3, losses: 2 });
+    tracker.eloCache.set('p2', { mu: 25, sigma: 8.333, roundsPlayed: 5, wins: 2, losses: 3 });
+
+    // Simulate an instability that computes without throwing: drawProbability 1
+    // ⇒ erfInv(1) = Infinity ⇒ infinite deltaMu. (loadParameters rejects this at
+    // mount — this bypasses it deliberately to prove the last line of defense.)
+    tracker.params = Object.freeze({ ...tracker.params, drawProbability: 1 });
+
+    await server.emit('ROUND_ENDED', { winner: { team: '1', tickets: 200 }, loser: { team: '2', tickets: 50 } });
+
+    if (bulkCalled) throw new Error('non-finite deltas must never be persisted');
+    const cached = tracker.eloCache.get('p1');
+    if (cached && !Number.isFinite(cached.mu)) throw new Error('cache must not hold non-finite mu');
+  });
+
+  await runTest('Quit detection: low participation but recently seen is NOT a quit', async () => {
+    const { tracker } = await makeTrackerForTest();
+    const EloSessionManager = (await import('../utils/elo-session-manager.js')).default;
+    const session = new EloSessionManager();
+    tracker.session = session;
+
+    session.startRound(10000);
+    // Late joiner: joins at 80s of a 100s round — participation 0.2 < 0.5, but present at end
+    session.updatePlayers([{ eosID: 'l', name: 'L', steamID: 'sl', teamID: 1, squadID: 1 }], 90000);
+    tracker.lastSeenByEosID.set('l', 110000);
+
+    const quitters = tracker._detectQuittersAt(110000);
+    if (quitters.has('l')) throw new Error('Late joiner present at round end must NOT be flagged as quitter');
+  });
+
+  await runTest('PerPlayerMeta: partyIgnoredTags treats community tag as public', async () => {
+    const server = createMockServer();
+    const tracker = new EloTracker(server, { ...mockOptions, partyIgnoredTags: ['ACE'] }, mockConnectors);
+    tracker.db = createMockDb();
+    tracker.session = createMockSession();
+    await tracker.mount();
+    const participants = [
+      { eosID: 'a', name: '[ACE] Alpha', assignedTeamID: 1, participationRatio: 1 },
+      { eosID: 'b', name: '[ACE] Bravo', assignedTeamID: 1, participationRatio: 1 }
+    ];
+    const meta = tracker._buildPerPlayerMeta(participants, participants);
+    if (meta.a.partySize !== 1 || meta.a.clanTag !== null) {
+      throw new Error(`ignored tag must make members public, got ${JSON.stringify(meta.a)}`);
+    }
   });
 }

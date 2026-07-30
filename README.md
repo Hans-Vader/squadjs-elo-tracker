@@ -51,6 +51,36 @@ Sigma communicates how stable a player's rating is:
 
 A dynamic uncertainty floor (τ/tau) prevents sigma from reaching zero, ensuring ratings can always respond to future performance.
 
+### TrueSkill2 Extensions
+
+The rating engine implements **TrueSkill2** (Minka, Cleven & Zaykov 2018, Microsoft Research MSR-TR-2018-8 — [paper](https://www.microsoft.com/en-us/research/publication/trueskill-2-improved-bayesian-skill-rating-system/)). Four additional Bayesian factors extend the classic win/loss update:
+
+| Factor | Paper ref | What it does |
+|---|---|---|
+| **Party offset** | eq. 7 | Players sharing a **clan tag on the same team** form a "party", expected to perform better together; the win/loss update accounts for that expectation. (In-game squads are not used; grouping is by clan-tag co-membership.) |
+| **Experience offset** | eq. 8 | New players improve fast; a small per-round drift (decaying with rounds played) tracks it. |
+| **Kill/death statistics** | eq. 9 | Per-minute kill and death counts become direct skill observations — good stats soften a loss, poor stats dampen a win. Zero counts use the exact censored update. |
+| **Quit penalty** | Section 9 | A detected quit is one extra "lost mini-game vs. the enemy team average" observation. |
+
+**All factors ship NEUTRAL (disabled).** Out of the box the engine reproduces the previous TrueSkill behaviour bit-for-bit (regression-tested against golden snapshots). The plugin *records* the new observations from day one — per-player `clanTag`, `partySize` (derived from clan-tag co-membership), `kills` (from `PLAYER_WOUNDED` downs), `deaths` (from `PLAYER_DIED`), `quit` and `experienceBefore` land in the match log and, with `enableDatabaseLogging`, in `Elo_RoundPlayers` (schema is created on first start — clean install assumed, no migrations).
+
+Enable factors by calibrating against your own match log (Halo-fitted paper values do not transfer to Squad):
+
+```
+node tools/elo-calibrate.js elo-match-log.jsonl db-backup.json
+```
+
+Stage 1 sweeps BETA/TAU as before; stage 2 sweeps the three TrueSkill2 parameters worth tuning at server scale (`quitParams.mQ`, new-player drift, 4-stack party boost) and prints a ready-to-paste `trueskill2` config block. New plugin options:
+
+| Option | Default | Meaning |
+|---|---|---|
+| `trueskill2` | `{}` | Engine parameter overrides (`partyOffsets`, `experienceOffsets`, `killParams`, `deathParams`, `quitParams`, `beta`, `tau`, ...) — see `utils/elo-parameters.js`. |
+| `enableQuitPenalty` | `false` | Apply the quit factor to detected quitters. Leave off until `mQ` is calibrated — quit detection is inference (SquadJS has no reliable disconnect event; ~30 s poll granularity; a crash looks like a rage-quit). |
+| `quitGraceSeconds` | `60` | Absence window after which a below-threshold player counts as departed. |
+| `quitParticipationThreshold` | `0.5` | Participation ratio below which an absent player is flagged as a quitter. |
+
+Historical rounds recorded before the upgrade carry no kill/squad/quit data — the new factors are simply inert when replaying them (`tools/elo-rebuild.js` handles both formats transparently).
+
 ---
 
 ## Compatible Plugins
@@ -115,7 +145,11 @@ Add the following to your `config.json`:
     "roundStartEmbedDelayMs": 180000,
     "ignoredGameModes": ["Seed", "Jensen"],
     "enablePublicIngameCommands": true,
-    "enableDatabaseLogging": false
+    "enableDatabaseLogging": false,
+    "enableQuitPenalty": false,
+    "quitGraceSeconds": 60,
+    "quitParticipationThreshold": 0.5,
+    "trueskill2": {}
   }
 ]
 ```
@@ -132,10 +166,15 @@ squad-server/
 │   └── elo-tracker.js
 └── utils/
     ├── elo-calculator.js
+    ├── elo-clan-grouping.js
     ├── elo-commands.js
     ├── elo-database.js
     ├── elo-discord.js
-    └── elo-session-manager.js
+    ├── elo-gauss.js
+    ├── elo-parameters.js
+    ├── elo-session-manager.js
+    ├── elo-trueskill2-engine.js
+    └── elo-trueskill2-factors.js
 ```
 
 ---

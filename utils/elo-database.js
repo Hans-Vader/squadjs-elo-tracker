@@ -289,6 +289,34 @@ export default class EloDatabase {
            sigmaAfter: {
              type: Sequelize.FLOAT,
              allowNull: false
+           },
+           // --- TrueSkill2 observation columns ---
+           partySize: {
+             type: Sequelize.INTEGER,
+             allowNull: true
+           },
+           clanTag: {
+             type: Sequelize.STRING,
+             allowNull: true
+           },
+           kills: {
+             type: Sequelize.INTEGER,
+             allowNull: false,
+             defaultValue: 0
+           },
+           deaths: {
+             type: Sequelize.INTEGER,
+             allowNull: false,
+             defaultValue: 0
+           },
+           quit: {
+             type: Sequelize.BOOLEAN,
+             allowNull: false,
+             defaultValue: false
+           },
+           experienceBefore: {
+             type: Sequelize.INTEGER,
+             allowNull: true
            }
          },
          { timestamps: false, tableName: 'Elo_RoundPlayers', charset: 'utf8mb4', collate: 'utf8mb4_unicode_ci' }
@@ -301,12 +329,43 @@ export default class EloDatabase {
             await this.sequelize.query('PRAGMA journal_mode=WAL;');
             await this.sequelize.query('PRAGMA synchronous=NORMAL;');
           }
-          
+
            await this.models.PluginState.sync();
            await this.models.PlayerStats.sync();
            await this.models.RoundHistory.sync();
            await this.models.RoundPlayers.sync();
+           // ponytail: no schema migrations — clean install assumed (sync()
+           // creates the full current schema; sync() without alter never
+           // adds columns to a pre-existing table, see commit 5f06177).
         });
+
+      // No migrations means a DB created before the TrueSkill2 columns existed
+      // keeps its old Elo_RoundPlayers schema — sync() won't add the columns,
+      // so every insertRoundPlayers would fail silently forever. Detect that
+      // here and surface it loudly instead. (Only affects DB match logging;
+      // JSONL logging and live scoring are unaffected.)
+      let roundPlayersSchemaOk = true;
+      try {
+        const desc = await this.sequelize.getQueryInterface().describeTable('Elo_RoundPlayers');
+        const required = ['partySize', 'clanTag', 'kills', 'deaths', 'quit', 'experienceBefore'];
+        const missing = required.filter((col) => !(col in desc));
+        if (missing.length > 0) {
+          roundPlayersSchemaOk = false;
+          Logger.verbose('EloTracker', 1,
+            `[DB] ################ SCHEMA MISMATCH ################\n` +
+            `[DB] Elo_RoundPlayers is missing column(s): ${missing.join(', ')}.\n` +
+            `[DB] This DB predates the TrueSkill2 columns and there are no\n` +
+            `[DB] migrations — per-round DB logging will FAIL for every round.\n` +
+            `[DB] Fix: stop the server, delete the old Elo tables (or the DB\n` +
+            `[DB] file), and restart to create the current schema. Back up first.\n` +
+            `[DB] ##################################################`);
+        }
+      } catch (schemaErr) {
+        // describeTable can legitimately fail on some backends; don't block
+        // startup over the diagnostic itself.
+        Logger.verbose('EloTracker', 2, `[DB] Could not verify Elo_RoundPlayers schema: ${schemaErr.message}`);
+      }
+      this.roundPlayersSchemaOk = roundPlayersSchemaOk;
 
       // Log PlayerStats row count on startup to detect silent table recreations
       const playerStatsCount = await this._executeWithRetry(async () => {
@@ -326,10 +385,13 @@ export default class EloDatabase {
       });
 
       Logger.verbose('EloTracker', 1, '[DB] Database initialized.');
-      return { roundStartTime: state.roundStartTime ? parseInt(state.roundStartTime) : null };
+      return {
+        roundStartTime: state.roundStartTime ? parseInt(state.roundStartTime) : null,
+        roundPlayersSchemaOk
+      };
     } catch (error) {
       Logger.verbose('EloTracker', 1, `[DB] Error initializing database: ${error.message}`);
-      return { roundStartTime: null };
+      return { roundStartTime: null, roundPlayersSchemaOk: false };
     }
   }
 

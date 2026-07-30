@@ -1,0 +1,22 @@
+{
+  "exportedAt": 1700000000000,
+  "playerCount": 2,
+  "players": [
+    {
+      "eosID": "w1",
+      "steamID": "steam_w1",
+      "discordID": "disc_w1",
+      "name": "W1",
+      "mu": 30,
+      "sigma": 5
+    },
+    {
+      "eosID": "l1",
+      "steamID": "steam_l1",
+      "discordID": null,
+      "name": "L1",
+      "mu": 20,
+      "sigma": 5
+    }
+  ]
+}

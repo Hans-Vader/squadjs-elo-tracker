@@ -143,6 +143,9 @@ import EloSessionManager from '../utils/elo-session-manager.js';
 import EloCalculator from '../utils/elo-calculator.js';
 import { EloDiscord } from '../utils/elo-discord.js';
 import EloCommands from '../utils/elo-commands.js';
+import { loadParameters } from '../utils/elo-parameters.js';
+import { computeRoundUpdate } from '../utils/elo-trueskill2-engine.js';
+import { computePartySizes } from '../utils/elo-clan-grouping.js';
 
 export default class EloTracker extends BasePlugin {
   static version = '1.3.0';
@@ -186,6 +189,48 @@ export default class EloTracker extends BasePlugin {
          description: 'If true, mirrors round outcome data into database tables for querying (default: false).',
          default: false,
          type: 'boolean'
+       },
+       quitGraceSeconds: {
+         required: false,
+         description: 'A player absent from the server for longer than this (seconds) at round end counts as departed. Keep >= 2 RCON poll cycles (~60s).',
+         default: 60,
+         type: 'number'
+       },
+       quitParticipationThreshold: {
+         required: false,
+         description: 'Players below this participation ratio AND absent at round end are flagged as quitters.',
+         default: 0.5,
+         type: 'number'
+       },
+       enableQuitPenalty: {
+         required: false,
+         description: 'If true, detected quitters receive the TrueSkill2 quit penalty (calibrate trueskill2.quitParams first!). Quit flags are recorded to the DB regardless.',
+         default: false,
+         type: 'boolean'
+       },
+       partyCaseSensitive: {
+         required: false,
+         description: 'Match clan tags case-sensitively (no normalization). Default false = normalized (case/homoglyph-insensitive).',
+         default: false,
+         type: 'boolean'
+       },
+       partyMaxEditDistance: {
+         required: false,
+         description: 'Levenshtein distance for merging near-identical clan tags. Default 0 = exact only (homoglyph/case variants already merge via normalization). WARNING: raising this can fuse different clans with similar tags ([KSK]+[KSC]) into one phantom party, permanently logged into partySize/clanTag.',
+         default: 0,
+         type: 'number'
+       },
+       partyIgnoredTags: {
+         required: false,
+         description: 'Clan tags to treat as public (community tags that are not real clans). Matched normalized. Default empty.',
+         default: [],
+         type: 'array'
+       },
+       trueskill2: {
+         required: false,
+         description: 'TrueSkill2 engine parameter overrides (partyOffsets, experienceOffsets, killParams, deathParams, quitParams, ...). Neutral by default — see utils/elo-parameters.js.',
+         default: {},
+         type: 'object'
        }
      };
    }
@@ -209,6 +254,26 @@ export default class EloTracker extends BasePlugin {
     // Connected players only. Populated on join, flushed at round end.
     this.eloCache = new Map();
 
+    // Idempotency guard: SquadJS can emit ROUND_ENDED more than once for the
+    // same round (sessions are only cleared on NEW_GAME). Set once a round is
+    // processed, reset on NEW_GAME — a duplicate would otherwise double-count
+    // wins/rounds and recompute against the just-cleared (cold) cache.
+    this._roundProcessed = false;
+
+    // Set from db.initDB(); false ⇒ old DB schema ⇒ per-round DB logging off.
+    this._roundPlayersSchemaOk = true;
+
+    // TrueSkill2 engine parameters (frozen; neutral unless configured)
+    this.params = loadParameters(this.options.trueskill2 ?? {});
+
+    // Per-round TrueSkill2 observations, cleared on NEW_GAME.
+    // Kills = PLAYER_WOUNDED downs; deaths = PLAYER_DIED (revives negate a death).
+    // Party size (eq.7) is derived from clan tags at round end, not in-game squads.
+    this.killsByEosID = new Map();
+    this.deathsByEosID = new Map();
+    // eosID → last timestamp the player was seen in server.players
+    this.lastSeenByEosID = new Map();
+
     this.discordAdminChannel = null;
     this.discordPublicChannel = null;
     this.discordReportChannel = null;
@@ -231,10 +296,25 @@ export default class EloTracker extends BasePlugin {
     this.listeners.onLayerInfoUpdated = this.onLayerInfoUpdated.bind(this);
     this.listeners.onUpdatedPlayerInfo = this.onUpdatedPlayerInfo.bind(this);
     this.listeners.onRoundEnded = this.onRoundEnded.bind(this);
+    this.listeners.onPlayerWounded = this.onPlayerWounded.bind(this);
+    this.listeners.onPlayerDied = this.onPlayerDied.bind(this);
     this.listeners.onServerInfoUpdated = this.onServerInfoUpdated.bind(this);
     this.listeners.onTeamBalancerScramble = this.onTeamBalancerScramble.bind(this);
     EloDiscord.registerDiscordCommands(this);
-    this.listeners.onDiscordMessage = this.onDiscordMessage.bind(this);
+    // Error boundary: the 'message' listener is a fire-and-forget async handler
+    // with ~15 unguarded `await message.reply()`/DB sites. A single rejection
+    // (bot missing Send-Messages perm, transient Discord 5xx, or the trigger
+    // message being deleted mid-handler) would otherwise escape as an unhandled
+    // rejection and, under Node's default policy, crash the whole SquadJS
+    // process. Wrap once here so no rejection from the handler can propagate.
+    const boundDiscordMessage = this.onDiscordMessage.bind(this);
+    this.listeners.onDiscordMessage = async (message) => {
+      try {
+        await boundDiscordMessage(message);
+      } catch (err) {
+        Logger.verbose('EloTracker', 1, `[onDiscordMessage] Unhandled error (suppressed to protect the process): ${err.stack || err.message}`);
+      }
+    };
     EloCommands.register(this);
     this.listeners.onEloCommand = this.onEloCommand.bind(this);
     this.listeners.onEloAdminCommand = this.onEloAdminCommand.bind(this);
@@ -247,7 +327,19 @@ export default class EloTracker extends BasePlugin {
     Logger.verbose('EloTracker', 1, 'Mounting plugin.');
     this.ready = false;
 
-    const { roundStartTime: persistedStartTime } = await this.db.initDB();
+    const { roundStartTime: persistedStartTime, roundPlayersSchemaOk } = await this.db.initDB();
+
+    // Gate per-round DB logging on the schema actually being current. On a
+    // pre-TrueSkill2 DB the Elo_RoundPlayers columns are missing and every
+    // insert would fail silently — better to disable that one feature loudly
+    // than to log an error every round. JSONL logging is unaffected.
+    this._roundPlayersSchemaOk = roundPlayersSchemaOk !== false;
+    if (this.options.enableDatabaseLogging && !this._roundPlayersSchemaOk) {
+      Logger.verbose('EloTracker', 1,
+        '[mount] enableDatabaseLogging is ON but Elo_RoundPlayers is on an old schema — ' +
+        'per-round DB logging is DISABLED for this session. See the [DB] SCHEMA MISMATCH notice above. ' +
+        'JSONL match logging still works.');
+    }
 
     // --- Prune stale player entries ---
     const { tier1, tier2 } = await this.db.pruneStaleEntries(this.options.minRoundsForLeaderboard);
@@ -313,6 +405,8 @@ export default class EloTracker extends BasePlugin {
     this.server.removeListener('UPDATED_LAYER_INFORMATION', this.listeners.onLayerInfoUpdated);
     this.server.removeListener('UPDATED_PLAYER_INFORMATION', this.listeners.onUpdatedPlayerInfo);
     this.server.removeListener('ROUND_ENDED', this.listeners.onRoundEnded);
+    this.server.removeListener('PLAYER_WOUNDED', this.listeners.onPlayerWounded);
+    this.server.removeListener('PLAYER_DIED', this.listeners.onPlayerDied);
     this.server.removeListener('UPDATED_SERVER_INFORMATION', this.listeners.onServerInfoUpdated);
     this.server.removeListener('TEAM_BALANCER_SCRAMBLE_EXECUTED', this.listeners.onTeamBalancerScramble);
     this.server.removeListener('CHAT_COMMAND:elo', this.listeners.onEloCommand);
@@ -322,6 +416,8 @@ export default class EloTracker extends BasePlugin {
     this.server.on('UPDATED_LAYER_INFORMATION', this.listeners.onLayerInfoUpdated);
     this.server.on('UPDATED_PLAYER_INFORMATION', this.listeners.onUpdatedPlayerInfo);
     this.server.on('ROUND_ENDED', this.listeners.onRoundEnded);
+    this.server.on('PLAYER_WOUNDED', this.listeners.onPlayerWounded);
+    this.server.on('PLAYER_DIED', this.listeners.onPlayerDied);
     this.server.on('UPDATED_SERVER_INFORMATION', this.listeners.onServerInfoUpdated);
     this.server.on('TEAM_BALANCER_SCRAMBLE_EXECUTED', this.listeners.onTeamBalancerScramble);
     this.server.on('CHAT_COMMAND:elo', this.listeners.onEloCommand);
@@ -351,6 +447,8 @@ export default class EloTracker extends BasePlugin {
     this.server.removeListener('UPDATED_LAYER_INFORMATION', this.listeners.onLayerInfoUpdated);
     this.server.removeListener('UPDATED_PLAYER_INFORMATION', this.listeners.onUpdatedPlayerInfo);
     this.server.removeListener('ROUND_ENDED', this.listeners.onRoundEnded);
+    this.server.removeListener('PLAYER_WOUNDED', this.listeners.onPlayerWounded);
+    this.server.removeListener('PLAYER_DIED', this.listeners.onPlayerDied);
     this.server.removeListener('UPDATED_SERVER_INFORMATION', this.listeners.onServerInfoUpdated);
     this.server.removeListener('TEAM_BALANCER_SCRAMBLE_EXECUTED', this.listeners.onTeamBalancerScramble);
     this.server.removeListener('CHAT_COMMAND:elo', this.listeners.onEloCommand);
@@ -438,7 +536,11 @@ export default class EloTracker extends BasePlugin {
      this.session.startRound(now);
      await this.db.saveRoundStartTime(now);
      this.lastRoundSnapshot = null;
+     this._roundProcessed = false; // new round ⇒ allow processing again
      this.eloCache.clear();
+     this.killsByEosID.clear();
+     this.deathsByEosID.clear();
+     this.lastSeenByEosID.clear();
      this._roundStartEmbedPending = Date.now();
 
      // NOTE (null-teamID transient): SquadJS RCON polling may return players with 
@@ -461,6 +563,13 @@ export default class EloTracker extends BasePlugin {
 
     const allPlayers = this.server.players;
     this.session.updatePlayers(allPlayers);
+
+    // Track presence for quit detection (players absent for > quitGraceSeconds
+    // at round end are considered departed; ~30s RCON poll granularity).
+    const seenAt = Date.now();
+    for (let i = 0; i < allPlayers.length; i++) {
+      if (allPlayers[i]?.eosID) this.lastSeenByEosID.set(allPlayers[i].eosID, seenAt);
+    }
 
     // Sync check for uncached players (No .filter/.map to save memory)
     const uncachedIDs = [];
@@ -509,6 +618,115 @@ export default class EloTracker extends BasePlugin {
         // else: still within retry window but below threshold — leave pending and retry next tick
       }
     }
+  }
+
+  /**
+   * PLAYER_WOUNDED — kill credit at the down (Squad scoreboard semantics).
+   * No credit for self-wounds or teamkills; the explicit `teamkill` flag is
+   * preferred, with an equal-teamID fallback when the flag is absent.
+   */
+  onPlayerWounded(data) {
+    if (!this.ready) return;
+    const victim = data?.victim;
+    const attacker = data?.attacker;
+    if (!victim?.eosID || !attacker?.eosID) return;
+    if (data?.teamkill === true) return;
+    if (attacker.eosID === victim.eosID) return;
+    if (attacker.teamID != null && victim.teamID != null && attacker.teamID === victim.teamID) return;
+    this.killsByEosID.set(attacker.eosID, (this.killsByEosID.get(attacker.eosID) ?? 0) + 1);
+  }
+
+  /**
+   * PLAYER_DIED — death counted at give-up/bleed-out (a revive negates the
+   * death). Suicides, teamkills and environment deaths all count for the victim.
+   */
+  onPlayerDied(data) {
+    if (!this.ready) return;
+    const victim = data?.victim;
+    if (!victim?.eosID) return;
+    this.deathsByEosID.set(victim.eosID, (this.deathsByEosID.get(victim.eosID) ?? 0) + 1);
+  }
+
+  /**
+   * Build the per-player TrueSkill2 observation map for the engine.
+   * Party size (eq. 7) is derived from clan tags in player names, grouped
+   * per team — NOT in-game squads. ALL round participants (even ones below
+   * the ELO eligibility floor) count toward a party's size, because they
+   * were really in that clan group.
+   *
+   * @param {Array} participants  full endRound() output
+   * @param {Array} eligible      participants above minParticipationRatio
+   * @param {Set<string>|null} quitters  detected quitters (_detectQuittersAt)
+   * @param {number|null} roundEndTime   for timePlayedMin (kill/death factor)
+   * @returns {Object} eosID → { clanTag, partySize, experience, kills, deaths,
+   *                             timePlayedMin, quit, quitDetected }
+   */
+  _buildPerPlayerMeta(participants, eligible, quitters = null, roundEndTime = null) {
+    // Round duration in minutes (includes staging — uniform dilution, the
+    // per-minute kill normalization is unaffected in relative terms).
+    const startTime = this.session.roundStartTime;
+    const roundDurationMin =
+      roundEndTime != null && startTime != null
+        ? Math.max(0, (roundEndTime - startTime) / 60000)
+        : 0;
+
+    // Clan-tag parties per team; ALL participants count (even ineligible ones).
+    const partyByEos = computePartySizes(
+      participants.map((p) => ({ eosID: p.eosID, name: p.name, teamID: p.assignedTeamID })),
+      {
+        caseSensitive: this.options.partyCaseSensitive,
+        maxEditDistance: this.options.partyMaxEditDistance,
+        ignoredTags: this.options.partyIgnoredTags // undefined until PART B ⇒ []
+      }
+    );
+
+    const perPlayerMeta = {};
+    for (const p of eligible) {
+      const quitDetected = quitters?.has(p.eosID) ?? false;
+      const party = partyByEos.get(p.eosID) ?? { partySize: 1, clanTag: null };
+      perPlayerMeta[p.eosID] = {
+        clanTag: party.clanTag,
+        partySize: party.partySize,
+        // Experience (eq. 8) = rounds played BEFORE this round. Must be read
+        // before processTeam() writes the post-round cache entry.
+        experience: this.eloCache.get(p.eosID)?.roundsPlayed ?? 0,
+        // Kill/death observations (eq. 9)
+        kills: this.killsByEosID.get(p.eosID) ?? 0,
+        deaths: this.deathsByEosID.get(p.eosID) ?? 0,
+        timePlayedMin: roundDurationMin * p.participationRatio,
+        // Detection is always recorded (DB inspection); the engine-facing
+        // `quit` only fires when the operator enabled the penalty.
+        quitDetected,
+        quit: this.options.enableQuitPenalty ? quitDetected : false
+      };
+    }
+    return perPlayerMeta;
+  }
+
+  /**
+   * Detect quitters at round end: participation below the threshold AND absent
+   * from the server for longer than the grace window.
+   *
+   * NOTE: SquadJS has no reliable disconnect event (PLAYER_DISCONNECTED never
+   * fires) — departure is inferred from server.players polling at ~30s
+   * granularity, and a crash is indistinguishable from a rage-quit. This flag
+   * is therefore recorded for inspection, and only feeds the rating engine
+   * when `enableQuitPenalty` is on.
+   *
+   * @param {number} roundEndTime
+   * @returns {Set<string>} eosIDs of detected quitters
+   */
+  _detectQuittersAt(roundEndTime) {
+    const quitters = new Set();
+    const quitGraceMs = (this.options.quitGraceSeconds ?? 60) * 1000;
+    const threshold = this.options.quitParticipationThreshold ?? 0.5;
+
+    for (const participant of this.session.snapshotParticipants(roundEndTime)) {
+      if (participant.participationRatio >= threshold) continue;
+      const lastSeen = this.lastSeenByEosID.get(participant.eosID) ?? 0;
+      if (roundEndTime - lastSeen > quitGraceMs) quitters.add(participant.eosID);
+    }
+    return quitters;
   }
 
   /**
@@ -620,6 +838,14 @@ export default class EloTracker extends BasePlugin {
       return;
     }
 
+    // Duplicate ROUND_ENDED for the same round (no NEW_GAME in between): the
+    // session and cache are in a post-processing state, so re-running would
+    // double-count and corrupt ratings. Ignore silently until NEW_GAME resets.
+    if (this._roundProcessed) {
+      Logger.verbose('EloTracker', 1, '[onRoundEnded] Round already processed — ignoring duplicate event.');
+      return;
+    }
+
     const roundEndTime = Date.now();
 
     // --- Eligibility checks ---
@@ -679,6 +905,26 @@ export default class EloTracker extends BasePlugin {
 
     const calculationStartTime = Date.now();
 
+    // --- Warm the rating cache for any eligible player missing from it ---
+    // After a SquadJS restart mid-round the cache is empty until the next
+    // background player-info fetch fills it. If ROUND_ENDED lands in that
+    // window, computing from MU/SIGMA defaults and persisting would wipe real
+    // accumulated ratings (and the experience offset would read 0 rounds).
+    // The data is one query away — fetch it synchronously before any read.
+    const uncached = eligible.map(p => p.eosID).filter(id => !this.eloCache.has(id));
+    if (uncached.length > 0) {
+      try {
+        const fetched = await this.db.getPlayerStatsBatch(uncached);
+        for (const [eosID, record] of fetched) {
+          if (record) this.eloCache.set(eosID, record);
+        }
+        // Players still missing here are genuinely new — the MU/SIGMA defaults
+        // in getRating are correct for them.
+      } catch (err) {
+        Logger.verbose('EloTracker', 1, `[onRoundEnded] Cache warm fetch failed: ${err.message}`);
+      }
+    }
+
     // --- Build team arrays with mu/sigma from cache ---
     const getRating = (eosID) =>
       this.eloCache.get(eosID) ?? { mu: EloCalculator.MU_DEFAULT, sigma: EloCalculator.SIGMA_DEFAULT };
@@ -700,12 +946,54 @@ export default class EloTracker extends BasePlugin {
       return;
     }
 
-    // --- Run TrueSkill ---
-    const { team1Updates, team2Updates } = EloCalculator.computeTeamUpdate(
-      team1Eligible.map(p => ({ ...getRating(p.eosID), participationRatio: p.participationRatio })),
-      team2Eligible.map(p => ({ ...getRating(p.eosID), participationRatio: p.participationRatio })),
-      outcome
-    );
+    // --- Run TrueSkill2 ---
+    // With neutral (default) this.params this is numerically identical to the
+    // old EloCalculator.computeTeamUpdate path (golden-tested).
+    const quitters = this._detectQuittersAt(roundEndTime);
+    const perPlayerMeta = this._buildPerPlayerMeta(participants, eligible, quitters, roundEndTime);
+
+    // Error boundary: the TrueSkill2 factor library throws by design on
+    // unstable messages (posterior precision <= 0, sigma <= 0). An uncaught
+    // throw in this async event listener escapes to the process and, under
+    // Node's default unhandled-rejection policy, can take down the whole
+    // SquadJS instance. Contain it here: skip the round, leave ratings
+    // untouched (nothing is mutated before this point), post a skip embed.
+    let team1Updates, team2Updates;
+    try {
+      ({ team1Updates, team2Updates } = computeRoundUpdate(
+        team1Eligible.map(p => ({ eosID: p.eosID, ...getRating(p.eosID), participationRatio: p.participationRatio })),
+        team2Eligible.map(p => ({ eosID: p.eosID, ...getRating(p.eosID), participationRatio: p.participationRatio })),
+        outcome,
+        perPlayerMeta,
+        this.params
+      ));
+      // Last line of defense: some instabilities compute to Infinity/NaN
+      // WITHOUT throwing (loadParameters validates the config, but corrupt
+      // cache values or future factors could still slip through) — a
+      // non-finite delta must never reach the cache or the DB.
+      const nonFinite = [...team1Updates, ...team2Updates].find(
+        (u) => !Number.isFinite(u.deltaMu) || !Number.isFinite(u.deltaSigma)
+      );
+      if (nonFinite) {
+        throw new Error(`non-finite rating delta (deltaMu=${nonFinite.deltaMu}, deltaSigma=${nonFinite.deltaSigma})`);
+      }
+    } catch (err) {
+      Logger.verbose('EloTracker', 1, `[onRoundEnded] Rating engine failed — round skipped, ratings unchanged: ${err.stack || err.message}`);
+      const targetReportChannel = this.discordReportChannel || this.discordAdminChannel;
+      if (targetReportChannel) {
+        try {
+          const embed = EloDiscord.buildRoundSkippedEmbed(`Rating engine error: ${err.message}`, playerCount, layerName);
+          await EloDiscord.sendDiscordMessage(targetReportChannel, { embeds: [embed] });
+        } catch (e2) {
+          Logger.verbose('EloTracker', 1, `[onRoundEnded] Also failed to post skip embed: ${e2.message}`);
+        }
+      }
+      return;
+    }
+
+    // Commit point: from here we mutate the cache and DB. Mark the round
+    // processed so a duplicate ROUND_ENDED is ignored (reset on NEW_GAME).
+    this._roundProcessed = true;
 
     const team1RatingsBefore = team1Eligible.map(p => getRating(p.eosID));
     const team2RatingsBefore = team2Eligible.map(p => getRating(p.eosID));
@@ -721,16 +1009,15 @@ export default class EloTracker extends BasePlugin {
       const teamRegulars = [];
 
       players.forEach((player, i) => {
+        // Participation scaling happens inside the engine (team factor only).
         const { deltaMu, deltaSigma } = updates[i];
         const rating = getRating(player.eosID);
-        const scaledDeltaMu = deltaMu * player.participationRatio;
-        const scaledDeltaSigma = deltaSigma * player.participationRatio;
 
-        totalDeltaMu += scaledDeltaMu;
-        totalDeltaSigma += Math.abs(scaledDeltaSigma); // Sum absolute change in uncertainty
+        totalDeltaMu += deltaMu;
+        totalDeltaSigma += Math.abs(deltaSigma); // Sum absolute change in uncertainty
 
-        const newMu = rating.mu + scaledDeltaMu;
-        const newSigma = Math.max(rating.sigma - scaledDeltaSigma, 0.5);
+        const newMu = rating.mu + deltaMu;
+        const newSigma = Math.max(rating.sigma - deltaSigma, 0.5);
         const wins = (rating.wins ?? 0) + (isWinner ? 1 : 0);
         const losses = (rating.losses ?? 0) + (isLoser ? 1 : 0);
 
@@ -753,7 +1040,7 @@ export default class EloTracker extends BasePlugin {
             name: player.name,
             muBefore: rating.mu,
             muAfter: newMu,
-            deltaMu: scaledDeltaMu
+            deltaMu
           });
         }
 
@@ -815,17 +1102,26 @@ export default class EloTracker extends BasePlugin {
       gameMode: gameMode ?? 'Unknown',
       outcome,
       roundDuration: roundEndTime - this.session.roundStartTime,
+      // Provenance: what this round was COMPUTED with. The scalars come from
+      // the live this.params; trueskill2Overrides is the operator's config
+      // block verbatim — loadParameters(overrides) is deterministic, so this
+      // snapshot fully reproduces the effective parameters.
       params: {
-        BETA: EloCalculator.BETA,
-        TAU: EloCalculator.TAU,
-        DRAW_PROBABILITY: EloCalculator.DRAW_PROBABILITY
+        beta: this.params.beta,
+        tau: this.params.tau,
+        drawProbability: this.params.drawProbability
       },
+      trueskill2Overrides: this.options.trueskill2 ?? {},
       players: [
         ...team1Eligible.map((player, i) => {
           const rating = team1RatingsBefore[i];
+          // Engine deltas are FINAL (participation scaling happens inside the
+          // engine, team factor only). rawDelta*/scaledDelta* are kept as
+          // field names for schema stability and are now identical.
           const { deltaMu, deltaSigma } = team1Updates[i];
-          const scaledDeltaMu = deltaMu * player.participationRatio;
-          const scaledDeltaSigma = deltaSigma * player.participationRatio;
+          const scaledDeltaMu = deltaMu;
+          const scaledDeltaSigma = deltaSigma;
+          const meta = perPlayerMeta[player.eosID] ?? {};
           return {
             eosID: player.eosID,
             name: player.name,
@@ -838,14 +1134,26 @@ export default class EloTracker extends BasePlugin {
             scaledDeltaMu,
             scaledDeltaSigma,
             muAfter: rating.mu + scaledDeltaMu,
-            sigmaAfter: Math.max(rating.sigma - scaledDeltaSigma, 0.5)
+            sigmaAfter: Math.max(rating.sigma - scaledDeltaSigma, 0.5),
+            // TrueSkill2 observations. clanTag/partySize are the live-computed
+            // clan-tag grouping (replay prefers these exact values; the in-game
+            // squad is deliberately NOT recorded — it carries no party signal).
+            // quit is raw detection — gating is an engine parameter choice, so
+            // rebuilds can re-decide it.
+            clanTag: meta.clanTag ?? null,
+            partySize: meta.partySize ?? 1,
+            kills: meta.kills ?? 0,
+            deaths: meta.deaths ?? 0,
+            quit: meta.quitDetected ?? false,
+            experienceBefore: meta.experience ?? 0
           };
         }),
         ...team2Eligible.map((player, i) => {
           const rating = team2RatingsBefore[i];
           const { deltaMu, deltaSigma } = team2Updates[i];
-          const scaledDeltaMu = deltaMu * player.participationRatio;
-          const scaledDeltaSigma = deltaSigma * player.participationRatio;
+          const scaledDeltaMu = deltaMu; // final engine delta, see team1 note
+          const scaledDeltaSigma = deltaSigma;
+          const meta = perPlayerMeta[player.eosID] ?? {};
           return {
             eosID: player.eosID,
             name: player.name,
@@ -858,7 +1166,13 @@ export default class EloTracker extends BasePlugin {
             scaledDeltaMu,
             scaledDeltaSigma,
             muAfter: rating.mu + scaledDeltaMu,
-            sigmaAfter: Math.max(rating.sigma - scaledDeltaSigma, 0.5)
+            sigmaAfter: Math.max(rating.sigma - scaledDeltaSigma, 0.5),
+            clanTag: meta.clanTag ?? null,
+            partySize: meta.partySize ?? 1,
+            kills: meta.kills ?? 0,
+            deaths: meta.deaths ?? 0,
+            quit: meta.quitDetected ?? false,
+            experienceBefore: meta.experience ?? 0
           };
         })
       ]
@@ -866,7 +1180,8 @@ export default class EloTracker extends BasePlugin {
     this._appendMatchLog(matchRecord).catch(err => Logger.verbose('EloTracker', 1, `Failed to append match log: ${err.message}`));
 
     // Fire-and-forget database insert if enabled and roundRecord was created
-    if (this.options.enableDatabaseLogging && roundRecord && roundRecord.id) {
+    // (skipped when the DB is on an old schema — see mount()).
+    if (this.options.enableDatabaseLogging && this._roundPlayersSchemaOk && roundRecord && roundRecord.id) {
       // Compute matchId and roundStartTime from session state
       const roundStartTime = this.session.roundStartTime;
       let matchId = null;
@@ -892,7 +1207,13 @@ export default class EloTracker extends BasePlugin {
         scaledDeltaMu: p.scaledDeltaMu,
         scaledDeltaSigma: p.scaledDeltaSigma,
         muAfter: p.muAfter,
-        sigmaAfter: p.sigmaAfter
+        sigmaAfter: p.sigmaAfter,
+        partySize: p.partySize,
+        clanTag: p.clanTag,
+        kills: p.kills,
+        deaths: p.deaths,
+        quit: p.quit,
+        experienceBefore: p.experienceBefore
       }));
       this.db.insertRoundPlayers(roundRecord.id, roundEndTime, playerRows).catch(err =>
         Logger.verbose('EloTracker', 1, `[onRoundEnded] Database player insert failed: ${err.message}`)
