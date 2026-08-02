@@ -1,12 +1,29 @@
-import { readFileSync, writeFileSync } from 'fs';
+import { readFileSync, writeFileSync, readdirSync, statSync } from 'fs';
+import { join } from 'path';
 
 // --- Config ---
-const FILE_A   = process.argv[2];
-const FILE_B   = process.argv[3];
-const OUT_FILE = process.argv[4] ?? 'merged-match-log.jsonl';
+// Inputs are positional (.jsonl files and/or directories); the output is an
+// explicit --out= flag. Guessing the output from position silently overwrites
+// an input file when more than two are given.
+const args     = process.argv.slice(2);
+const outArg   = args.find(a => a.startsWith('--out='));
+const OUT_FILE = outArg ? outArg.slice('--out='.length) : 'merged-match-log.jsonl';
+const inputs   = args.filter(a => a !== outArg);
 
-if (!FILE_A || !FILE_B) {
-  console.error('Usage: node merge-match-logs.mjs <fileA> <fileB> [output]');
+if (!inputs.length) {
+  console.error('Usage: node merge-match-logs.js <file.jsonl|dir> [...more] [--out=merged.jsonl]');
+  process.exit(1);
+}
+
+// Expand directories to their .jsonl contents
+const files = inputs.flatMap(p =>
+  statSync(p).isDirectory()
+    ? readdirSync(p).filter(f => f.endsWith('.jsonl')).sort().map(f => join(p, f))
+    : [p]
+);
+
+if (files.includes(OUT_FILE)) {
+  console.error(`Refusing to overwrite input file: ${OUT_FILE}`);
   process.exit(1);
 }
 
@@ -22,13 +39,16 @@ function parseJsonl(path) {
     .filter(Boolean);
 }
 
-const entriesA = parseJsonl(FILE_A);
-const entriesB = parseJsonl(FILE_B);
-
-// --- Deduplicate by matchId, FILE_A wins on conflict ---
+// --- Deduplicate by matchId, earlier file wins on conflict ---
+let totalInput = 0;
 const seen = new Map();
-for (const entry of [...entriesA, ...entriesB]) {
-  if (!seen.has(entry.matchId)) seen.set(entry.matchId, entry);
+
+for (const file of files) {
+  const entries = parseJsonl(file);
+  totalInput += entries.length;
+  for (const entry of entries) {
+    if (!seen.has(entry.matchId)) seen.set(entry.matchId, entry);
+  }
 }
 
 // --- Sort by endedAt ascending ---
@@ -38,6 +58,6 @@ const merged = [...seen.values()].sort((a, b) => a.endedAt - b.endedAt);
 const output = merged.map(e => JSON.stringify(e)).join('\n') + '\n';
 writeFileSync(OUT_FILE, output, 'utf8');
 
-console.log(`Merged ${entriesA.length} + ${entriesB.length} entries`);
-console.log(`Duplicates removed: ${entriesA.length + entriesB.length - merged.length}`);
+console.log(`Merged ${files.length} files (${totalInput} total entries)`);
+console.log(`Duplicates removed: ${totalInput - merged.length}`);
 console.log(`Output: ${merged.length} records → ${OUT_FILE}`);

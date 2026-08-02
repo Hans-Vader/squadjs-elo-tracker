@@ -1,5 +1,6 @@
 *.jsonl
 *.json
+!/package.json
 
 # Docker / local env
 /.env

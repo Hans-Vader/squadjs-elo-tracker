@@ -1,0 +1,9 @@
+{
+  "name": "squadjs-elo-tracker",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "sequelize": "^6.37.0",
+    "sqlite3": "^5.1.7"
+  }
+}
