@@ -617,7 +617,7 @@ function cmdRound(targetId, db, mlog) {
   const team1 = matchPlayers.filter(p => p.teamID === 1);
   const team2 = matchPlayers.filter(p => p.teamID === 2);
 
-  const { team1Updates, team2Updates, debug } = EloCalculator.computeTeamUpdate(team1, team2, match.outcome);
+  const { team1Updates, team2Updates, debug } = EloCalculator.computeTeamUpdate(team1, team2, match.outcome, match.ticketDiff ?? null);
 
   const processTeam = (players, updates) => {
     const metrics = getMatchMetrics(players);

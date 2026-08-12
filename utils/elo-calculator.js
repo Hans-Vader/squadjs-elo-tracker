@@ -13,12 +13,13 @@
  *
  * EloCalculator (default)
  *   Static-only class. All methods and constants are static.
- *     computeTeamUpdate(team1, team2, outcome)
+ *     computeTeamUpdate(team1, team2, outcome, ticketDiff)
  *       Core update method — returns raw deltaMu/deltaSigma per player,
  *       normalising effective team sizes to prevent variance inflation.
+ *       ticketDiff is optional; omitting it reproduces the pre-margin behaviour.
  *     getDefaultRating()
  *       Returns the default { mu, sigma } for a new player.
- *     BETA, DRAW_PROBABILITY
+ *     BETA, DRAW_PROBABILITY, MARGIN_WEIGHT, MARGIN_NEUTRAL_TICKETS
  *       Configurable static constants exposed for external tuning.
  *
  * ─── DEPENDENCIES ────────────────────────────────────────────────
@@ -41,7 +42,13 @@
    *   inflating or deflating the team's perceived strength.
    * - The MU_DEFAULT, SIGMA_DEFAULT, BETA, and TAU constants form a mathematically
    *   interdependent set. If you wish to change the scale of the system,
-   *   you must update all constants proportionally.
+   *   you must update all constants proportionally. MARGIN_WEIGHT and
+   *   MARGIN_NEUTRAL_TICKETS are NOT part of that set — see their comments.
+   * - Margin of victory is a deliberate heuristic, not a strict Bayesian update: the
+   *   threshold is picked after seeing the result, so the events overlap. The strictly
+   *   correct form is an interval likelihood (_vDraw/_wDraw with asymmetric bounds),
+   *   which is rejected on purpose because it takes rating AWAY from a favourite that
+   *   wins narrowly.
    *
    * Author:
  * Discord: `real_slacker`
@@ -66,6 +73,28 @@ export default class EloCalculator {
   // proportional changes to all related constants.
   static BETA = 25.0 / 6.0;              // Skill chain distance (mu / 6). Affects how fast ratings shift.
   static DRAW_PROBABILITY = 0.01;        // Probability of a draw. (1%)
+
+  // --- Margin of Victory (ticket differential) ---
+  // Shifts the margin term handed to _v/_w instead of multiplying deltaMu afterwards:
+  // _v(t, e) is the update for the event "performance difference exceeded e", so a bigger
+  // observed margin means a bigger e and a bigger update. A narrow win therefore moves BOTH
+  // teams less — winner and loser share the same vVal, only the sign differs.
+  // MARGIN_WEIGHT = 0 restores the exact pre-feature behaviour.
+  // NOTE: neither constant belongs to the MU/SIGMA/BETA/TAU scale set above. MARGIN_WEIGHT
+  // lives in the normalised t-space and MARGIN_NEUTRAL_TICKETS is a raw ticket count, so
+  // neither is rescaled when the mu scale changes.
+  static MARGIN_WEIGHT = 0.3;
+  // Criterion: E[min(ticketDiff / MARGIN_NEUTRAL_TICKETS, 2)] === 1 over recent rounds,
+  // i.e. E[margin] === 0. That is the CLIPPED MEAN, not the median — E[margin] is what
+  // scales the width of the whole ladder, so a systematic offset stretches or squashes
+  // sd(mu) permanently. Measured on 67 real matches: zero crossing at 187, the median (178)
+  // would give +0.043. Re-derive this after a few hundred rounds or a meta shift.
+  // ponytail: one neutral point for every game mode. Invasion starts with an asymmetric
+  // ticket pool (max observed diff 588 vs. a RAAS/AAS median of 178); the clamp at 2x
+  // neutral saturates it and Invasion was 1 of 79 matches. Upgrade path is a per-gameMode
+  // neutral (the fetcher already records gameMode) once Invasion clears ~20% of rounds AND
+  // its clipped mean differs from RAAS by >30%.
+  static MARGIN_NEUTRAL_TICKETS = 185;
 
   /**
    * Calculates the probability density function (PDF) of the standard normal distribution.
@@ -181,13 +210,16 @@ export default class EloCalculator {
    * 
    * @param {Array<{mu: number, sigma: number}>} team1 
    * @param {Array<{mu: number, sigma: number}>} team2 
-   * @param {'team1win' | 'team2win' | 'draw'} outcome 
+   * @param {'team1win' | 'team2win' | 'draw'} outcome
+   * @param {number|null} [ticketDiff] Absolute ticket differential of the round.
+   *   null/undefined (round-end data missing) is treated as a typical margin, i.e. the
+   *   result is identical to the pre-feature behaviour. Ignored for draws.
    * @returns {{
    *   team1Updates: Array<{deltaMu: number, deltaSigma: number}>,
    *   team2Updates: Array<{deltaMu: number, deltaSigma: number}>
    * }}
    */
-  static computeTeamUpdate(team1, team2, outcome) {
+  static computeTeamUpdate(team1, team2, outcome, ticketDiff = null) {
     // Handle edge case: empty teams
     if (team1.length === 0 && team2.length === 0) {
       return { team1Updates: [], team2Updates: [] };
@@ -244,6 +276,14 @@ export default class EloCalculator {
     const nTotal = effectiveN1 + effectiveN2;
     const epsilon = Math.sqrt(nTotal) * this.BETA * Math.sqrt(2) * this._erfInv(this.DRAW_PROBABILITY);
 
+    // Margin of victory, normalised to [-1, +1]:
+    //   -1 = razor-thin (0 tickets), 0 = typical round, +1 = blowout (>= 2x neutral).
+    // Missing ticket data (null/undefined) collapses to 0 — unchanged behaviour.
+    const margin = Number.isFinite(ticketDiff)
+      ? Math.min(ticketDiff / this.MARGIN_NEUTRAL_TICKETS, 2) - 1
+      : 0;
+    const marginShift = this.MARGIN_WEIGHT * margin;
+
     // t = (teamMu_winner - teamMu_loser) / c
     // We calculate t relative to team1 vs team2, then adjust signs based on outcome.
     // tRaw = (Mu1 - Mu2) / c
@@ -276,8 +316,12 @@ export default class EloCalculator {
           tWinner = -tRaw; // flip: (Mu2 - Mu1) / c, positive if team2 stronger
           isWinner = !isTeam1;
         }
-        vVal = this._v(tWinner, epsilon / c);
-        wVal = this._w(tWinner, epsilon / c);
+        // Margin of victory shifts the threshold: a blowout raises it (bigger update),
+        // a squeaker lowers it (smaller update). Both teams share this vVal.
+        // The draw branch above deliberately keeps the plain epsilon — a draw has no
+        // margin by definition and _vDraw carries different sign semantics.
+        vVal = this._v(tWinner, epsilon / c + marginShift);
+        wVal = this._w(tWinner, epsilon / c + marginShift);
       }
 
       // deltaMu:
@@ -334,6 +378,8 @@ export default class EloCalculator {
         effectiveN1, effectiveN2,
         nTotal,
         epsilon,
+        margin,
+        marginShift,
         tRaw,
         vVal,
         wVal

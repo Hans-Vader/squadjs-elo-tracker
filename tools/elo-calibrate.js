@@ -70,7 +70,7 @@ rl.on('line', (line) => {
   const team2 = players.filter(p => p.teamID === 2);
   if (!team1.length || !team2.length) return;
 
-  matches.push({ matchId, endedAt, outcome, players, team1, team2 });
+  matches.push({ matchId, endedAt, outcome, ticketDiff: match.ticketDiff ?? null, players, team1, team2 });
 });
 
 // --- Win probability ---
@@ -100,9 +100,15 @@ function winProbability(team1, team2, BETA) {
 }
 
 // --- Replay ---
-function replayMatches(matches, BETA, TAU) {
+// MARGIN_WEIGHT defaults to the calculator's own value so the BETA/TAU grid keeps
+// measuring the live configuration. Pass it explicitly only for the margin sweep.
+function replayMatches(matches, BETA, TAU, MARGIN_WEIGHT = EloCalculator.MARGIN_WEIGHT) {
   EloCalculator.BETA = BETA;
   EloCalculator.TAU  = TAU;
+  // Hard cap: past ~8 the shifted margin drives _cdf() to exactly 0, _v() returns 0 and
+  // every update silently becomes a no-op — which a loss-minimising search would happily
+  // pick. Anything above 2 is nonsense anyway.
+  EloCalculator.MARGIN_WEIGHT = Math.min(MARGIN_WEIGHT, 2);
 
   const ratings   = new Map();
   const getRating = (eosID) => {
@@ -114,7 +120,7 @@ function replayMatches(matches, BETA, TAU) {
   const games   = [];
 
   for (const match of matches) {
-    const { matchId, outcome, weight, team1, team2 } = match;
+    const { matchId, outcome, weight, ticketDiff, team1, team2 } = match;
 
     const t1ratings = team1.map(p => ({ eosID: p.eosID, ...getRating(p.eosID) }));
     const t2ratings = team2.map(p => ({ eosID: p.eosID, ...getRating(p.eosID) }));
@@ -123,7 +129,9 @@ function replayMatches(matches, BETA, TAU) {
     const p      = outcome === 'team1win' ? pTeam1 : 1 - pTeam1;
     totalLoss   += -Math.log(p) * weight;
 
-    const { team1Updates, team2Updates } = EloCalculator.computeTeamUpdate(t1ratings, t2ratings, outcome);
+    // winProbability() above deliberately does NOT see ticketDiff — it is a pre-match
+    // prediction and must stay blind to the result it is being scored against.
+    const { team1Updates, team2Updates } = EloCalculator.computeTeamUpdate(t1ratings, t2ratings, outcome, ticketDiff);
 
     const applyUpdates = (players, updates) => {
       for (let i = 0; i < players.length; i++) {
@@ -256,6 +264,7 @@ function diagBuckets(games, label) {
 // --- Main ---
 rl.on('close', () => {
   matches.sort((a, b) => a.endedAt - b.endedAt);
+  const defaultMarginWeight = EloCalculator.MARGIN_WEIGHT;
 
   for (const match of matches) {
     const rated1 = match.team1.filter(p => { const d = playerDB.get(p.eosID); return d && d.roundsPlayed >= RATED_MIN_GAMES; });
@@ -271,6 +280,29 @@ rl.on('close', () => {
   const { totalLoss: smokeLoss, adjustedLoss: smokeAdjLoss, games: smokeGames } = replayMatches(matches, 25 / 6, 25 / 300);
   const smokeAcc = (smokeGames.filter(g => g.correct).length / smokeGames.length * 100).toFixed(1);
   console.log(`\nSmoke test (default params): loss=${smokeLoss.toFixed(4)}, accuracy=${smokeAcc}%`);
+
+  // --- Margin of victory sweep (at default BETA/TAU) ---
+  // Kept out of the BETA/TAU grid on purpose: a third dimension would quadruple the grid
+  // runtime to answer a question one small table already answers.
+  const withTickets = matches.filter(m => Number.isFinite(m.ticketDiff)).length;
+  console.log(`\n=== MARGIN_WEIGHT SWEEP (BETA=4.17 TAU=0.0833) ===`);
+  if (withTickets === 0) {
+    console.log('No match in this log carries ticketDiff — margin is inert. Re-fetch the log first.\n');
+  } else {
+    console.log(`${withTickets}/${matches.length} matches carry ticketDiff. MARGIN_WEIGHT=0 is the pre-margin baseline.`);
+    const clippedMean = matches.reduce((s, m) => s + (Number.isFinite(m.ticketDiff)
+      ? Math.min(m.ticketDiff / EloCalculator.MARGIN_NEUTRAL_TICKETS, 2) : 1), 0) / matches.length;
+    console.log(`E[margin] = ${(clippedMean - 1).toFixed(4)} at MARGIN_NEUTRAL_TICKETS=${EloCalculator.MARGIN_NEUTRAL_TICKETS} (want ~0; retune the neutral if it drifts)\n`);
+    console.log(`${'MW'.padEnd(8)} ${'RawLoss'.padEnd(12)} ${'AdjLoss'.padEnd(12)} ${'Accuracy'}`);
+    console.log('─'.repeat(44));
+    for (const MW of [0, 0.2, 0.3, 0.5, 0.8]) {
+      const r   = replayMatches(matches, 25 / 6, 25 / 300, MW);
+      const acc = (r.games.filter(g => g.correct).length / r.games.length * 100).toFixed(1);
+      console.log(`${MW.toFixed(1).padEnd(8)} ${r.totalLoss.toFixed(4).padEnd(12)} ${r.adjustedLoss.toFixed(2).padEnd(12)} ${acc}%`);
+    }
+    console.log('');
+  }
+  EloCalculator.MARGIN_WEIGHT = defaultMarginWeight; // restore before the grid search
 
   // Grid search
   const numBetas = Math.round((BETA_MAX - BETA_MIN) / BETA_STEP) + 1;

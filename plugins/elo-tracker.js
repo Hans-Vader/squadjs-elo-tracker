@@ -654,6 +654,12 @@ export default class EloTracker extends BasePlugin {
     // SquadJS ROUND_ENDED data.winner is an object like { team: '1', tickets: 150 }
     const winningTeamID = data?.winner ? parseInt(data.winner.team, 10) : null;
     const ticketDiff = Math.abs((data?.winner?.tickets ?? 0) - (data?.loser?.tickets ?? 0));
+    // The line above always yields a number, so a missing ticket field would look like a
+    // 0-ticket nail-biter and silently damp EVERY match. Only feed the margin into the
+    // rating math when both sides actually reported a ticket count; otherwise pass null
+    // so the calculator falls back to a neutral margin.
+    const hasTickets = Number.isFinite(Number(data?.winner?.tickets))
+                    && Number.isFinite(Number(data?.loser?.tickets));
     const outcome = winningTeamID === 1 ? 'team1win'
                   : winningTeamID === 2 ? 'team2win'
                   : 'draw';
@@ -704,7 +710,8 @@ export default class EloTracker extends BasePlugin {
     const { team1Updates, team2Updates } = EloCalculator.computeTeamUpdate(
       team1Eligible.map(p => ({ ...getRating(p.eosID), participationRatio: p.participationRatio })),
       team2Eligible.map(p => ({ ...getRating(p.eosID), participationRatio: p.participationRatio })),
-      outcome
+      outcome,
+      hasTickets ? ticketDiff : null
     );
 
     const team1RatingsBefore = team1Eligible.map(p => getRating(p.eosID));
@@ -814,11 +821,16 @@ export default class EloTracker extends BasePlugin {
       layerName: layerName,
       gameMode: gameMode ?? 'Unknown',
       outcome,
+      // null when round-end data carried no ticket counts — replays must treat that as a
+      // neutral margin, not as a 0-ticket nail-biter.
+      ticketDiff: hasTickets ? ticketDiff : null,
       roundDuration: roundEndTime - this.session.roundStartTime,
       params: {
         BETA: EloCalculator.BETA,
         TAU: EloCalculator.TAU,
-        DRAW_PROBABILITY: EloCalculator.DRAW_PROBABILITY
+        DRAW_PROBABILITY: EloCalculator.DRAW_PROBABILITY,
+        MARGIN_WEIGHT: EloCalculator.MARGIN_WEIGHT,
+        MARGIN_NEUTRAL_TICKETS: EloCalculator.MARGIN_NEUTRAL_TICKETS
       },
       players: [
         ...team1Eligible.map((player, i) => {

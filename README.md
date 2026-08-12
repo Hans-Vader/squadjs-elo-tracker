@@ -51,6 +51,35 @@ Sigma communicates how stable a player's rating is:
 
 A dynamic uncertainty floor (τ/tau) prevents sigma from reaching zero, ensuring ratings can always respond to future performance.
 
+### Margin of Victory
+
+A win is not just a win. Beating a team that still had 20 tickets left says far less about the
+gap between the two sides than steamrolling them 300–0 — and the same is true in reverse for
+the losing side. The ticket differential therefore scales how far ratings move.
+
+| Constant | Default | Meaning |
+|---|---|---|
+| `MARGIN_WEIGHT` | 0.3 | Strength of the effect. **Set to 0 to disable margin of victory entirely.** |
+| `MARGIN_NEUTRAL_TICKETS` | 185 | Ticket differential that counts as a typical round and changes nothing. |
+
+A round finishing at the neutral margin produces exactly the rating change it would have
+before this feature existed. From there the update scales by roughly ±25%:
+
+| Ticket differential | Rating change |
+|---|---|
+| 0 (nail-biter) | −23% |
+| 185 (typical) | unchanged |
+| ≥ 370 (blowout) | +25% |
+
+Winner and loser are always scaled by the same factor, so a narrow result moves **both** sides
+less — no rating is shifted from one team to the other. Draws ignore the margin, as do rounds
+where the server did not report ticket counts.
+
+`MARGIN_NEUTRAL_TICKETS` must satisfy `E[min(ticketDiff / neutral, 2)] ≈ 1` across recent
+rounds — that is the *clipped mean*, not the median. It is what keeps the width of the
+leaderboard stable, so re-check it after a few hundred rounds or a meta change. The
+`MARGIN_WEIGHT` sweep printed by `tools/elo-calibrate.js` reports the current value.
+
 ---
 
 ## Compatible Plugins

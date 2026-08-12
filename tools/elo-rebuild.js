@@ -108,7 +108,7 @@ async function main() {
     const t1Ratings = team1Players.map(toRating);
     const t2Ratings = team2Players.map(toRating);
 
-    const { team1Updates, team2Updates } = EloCalculator.computeTeamUpdate(t1Ratings, t2Ratings, match.outcome);
+    const { team1Updates, team2Updates } = EloCalculator.computeTeamUpdate(t1Ratings, t2Ratings, match.outcome, match.ticketDiff ?? null);
 
     const isTeam1Winner = match.outcome === 'team1win';
     const isTeam2Winner = match.outcome === 'team2win';
