@@ -17,12 +17,13 @@
  *     initDB()                         — Sync models, seed PluginState row.
  *     getPlayerStats(eosID)            — Single player lookup by eosID.
  *     getPlayerStatsBatch(eosIDs)      — Bulk lookup; returns a Map.
- *     searchPlayer(identifier)         — Fuzzy search by eosID/steamID/name.
+ *     searchPlayers(identifier, opts)  — Ranked search by eosID/steamID/name (tiered).
+ *     searchPlayer(identifier, opts)   — Best single match from searchPlayers().
  *     upsertPlayerStats(eosID, fields) — Single-record upsert.
  *     bulkIncrementPlayerStats(updates) — Batch increment in one transaction.
  *     insertRoundHistory(data)         — Append a round record.
  *     getLeaderboard(limit, minRounds, offset) — Top players by CSR, with optional offset.
- *     getPlayerRank(consRating, minRounds) — Rank of a given CSR value.
+ *     getPlayerRank(eosID, minRounds)  — CSR rank of a player, compared in SQL.
  *     getTotalRankedPlayers(minRounds) — Count of players meeting the minimum rounds threshold.
  *     exportPlayerStats()              — Full table dump as plain objects.
  *     importPlayerStats(records)       — Bulk restore from export.
@@ -386,29 +387,147 @@ export default class EloDatabase {
     }
   }
 
-  async searchPlayer(identifier) {
-    if (!this.sequelize || !identifier) return null;
-    const id = identifier.trim();
-    try {
-      return await this._executeWithRetry(async () => {
-        const record = await this.models.PlayerStats.findOne({ where: { eosID: id } });
-        if (record) return record.toJSON();
+  /**
+   * Case-insensitive LIKE on every dialect, as a raw literal so it can carry an
+   * ESCAPE clause. The escape char is '!': a backslash cannot be spelled
+   * portably (MySQL needs '\\', SQLite rejects that as "ESCAPE expression must
+   * be a single character" and has no default escape at all).
+   */
+  _likeLiteral(column, term, { exact = false, trimColumn = false } = {}) {
+    const escaped = String(term).replace(/!/g, '!!').replace(/%/g, '!%').replace(/_/g, '!_');
+    const quoted = this.sequelize.getQueryInterface().quoteIdentifier(column);
+    const target = trimColumn ? `TRIM(${quoted})` : quoted;
+    const keyword = this.sequelize.getDialect() === 'postgres' ? 'ILIKE' : 'LIKE';
+    const pattern = this.sequelize.escape(exact ? escaped : `%${escaped}%`);
+    return Sequelize.literal(`${target} ${keyword} ${pattern} ESCAPE '!'`);
+  }
 
-        const escaped = id.replace(/%/g, '\\%').replace(/_/g, '\\_');
-        const fuzzy = await this.models.PlayerStats.findOne({
-          where: {
-            [Sequelize.Op.or]: [
-              { steamID: id },
-              { name: { [Sequelize.Op.like]: `%${escaped}%` } }
-            ]
-          }
+  /**
+   * Ranked player search, best match first. Each row carries a non-persisted
+   * `_matchTier`:
+   *   0  exact eosID / steamID
+   *   1  exact name, case-insensitive, as stored OR minus clan tags
+   *   2  prefix of the raw or tag-stripped name
+   *   3  substring
+   * Within a tier: online first, then most roundsPlayed, then latest lastSeen.
+   * Literal and tag-stripped exact names share tier 1 on purpose, so `hunty`
+   * resolves to the regular "[NL] Hunty" rather than a drive-by " Hunty".
+   *
+   * @param {string} identifier
+   * @param {Object} [opts]
+   * @param {number} [opts.limit=100] - Max rows per name query.
+   * @param {Set<string>|string[]} [opts.onlineIDs] - eosIDs/steamIDs on the server.
+   * @returns {Promise<Array<Object>>}
+   */
+  async searchPlayers(identifier, opts = {}) {
+    if (!this.sequelize || !identifier) return [];
+    const id = String(identifier).trim();
+    if (!id) return [];
+    const limit = Number.isFinite(opts.limit) ? opts.limit : 100;
+    const online = new Set(opts.onlineIDs || []);
+
+    try {
+      const rows = await this._executeWithRetry(async () => {
+        const model = this.models.PlayerStats;
+        const byId = await model.findOne({
+          where: { [Sequelize.Op.or]: [{ eosID: id }, { steamID: id }] }
         });
-        return fuzzy ? fuzzy.toJSON() : null;
+        if (byId) return [{ row: byId.toJSON(), tier: 0 }];
+
+        // The exact-name query runs separately so a low-round exact match can't
+        // be truncated away by the fuzzy query's LIMIT. TRIM because Squad
+        // stores most names with a leading space.
+        const exact = await model.findAll({
+          where: this._likeLiteral('name', id, { exact: true, trimColumn: true }),
+          order: [['roundsPlayed', 'DESC']],
+          limit
+        });
+        const fuzzy = await model.findAll({
+          where: this._likeLiteral('name', id),
+          order: [['roundsPlayed', 'DESC']],
+          limit
+        });
+
+        const collected = new Map();
+        for (const r of exact) collected.set(r.eosID, { row: r.toJSON(), tier: 1 });
+        for (const r of fuzzy) {
+          if (!collected.has(r.eosID)) collected.set(r.eosID, { row: r.toJSON(), tier: null });
+        }
+        return [...collected.values()];
       });
+      return EloDatabase._rankSearchRows(rows, id, online);
     } catch (error) {
       Logger.verbose('EloTracker', 1, `[DB] Error searching for player ${id}: ${error.message}`);
-      return null;
+      return [];
     }
+  }
+
+  /** Scores untiered rows from their name and sorts best-first. Pure, DB-free. */
+  static _rankSearchRows(rows, term, online = new Set()) {
+    const needle = String(term).trim().toLowerCase();
+    const scored = rows.map(({ row, tier }) => {
+      if (tier === null || tier === undefined) {
+        const raw = String(row.name || '').trim().toLowerCase();
+        const bare = EloDatabase.stripClanTags(row.name).toLowerCase();
+        if (raw === needle || bare === needle) tier = 1;
+        else if (raw.startsWith(needle) || bare.startsWith(needle)) tier = 2;
+        else tier = 3;
+      }
+      const isOnline = online.has(row.eosID) || (row.steamID ? online.has(row.steamID) : false);
+      return { row: { ...row, _matchTier: tier }, tier, isOnline };
+    });
+
+    scored.sort((a, b) =>
+      (a.tier - b.tier) ||
+      (Number(b.isOnline) - Number(a.isOnline)) ||
+      ((b.row.roundsPlayed || 0) - (a.row.roundsPlayed || 0)) ||
+      ((b.row.lastSeen || 0) - (a.row.lastSeen || 0))
+    );
+    return scored.map((s) => s.row);
+  }
+
+  /**
+   * Strips bracket/symbol-delimited clan decoration: "[NL] Cerv", "=NL= Cerv",
+   * "Cerv [NL]" -> "Cerv". Deliberately does not guess unbracketed prefixes
+   * (that would turn "John Smith" into "Smith"). Never returns empty.
+   */
+  static stripClanTags(name) {
+    if (!name || typeof name !== 'string') return '';
+    const original = name.trim();
+    const out = original
+      .replace(/^\s*[[({<|=][^\])}>|=]{0,20}[\])}>|=]\s*/u, '')
+      .replace(/\s*[[({<|=][^\])}>|=]{0,20}[\])}>|=]\s*$/u, '')
+      .replace(/^[\s\-_.|/\\*~+]+/u, '')
+      .replace(/[\s\-_.|/\\*~+]+$/u, '');
+    return out.trim() || original;
+  }
+
+  /**
+   * Safe for a destructive command to act on? Requires an exact hit (tier 0/1)
+   * that nobody else matched equally well — "[NL] Cerv" and "[US] Cerv" both
+   * strip to "Cerv", so `reset cerv` must refuse rather than pick one.
+   */
+  static isUnambiguous(candidates) {
+    if (!Array.isArray(candidates) || candidates.length === 0) return false;
+    const best = candidates[0]._matchTier ?? 3;
+    if (best > 1) return false;
+    return candidates.filter((p) => (p._matchTier ?? 3) === best).length === 1;
+  }
+
+  /** "Also matched: …" line for a guessed match, or null when unambiguous. */
+  static formatOtherMatches(candidates, max = 3) {
+    if (!Array.isArray(candidates) || candidates.length < 2) return null;
+    if (EloDatabase.isUnambiguous(candidates)) return null;
+    const others = candidates.slice(1, 1 + max)
+      .map((p) => `${String(p.name || '?').trim()} (${p.roundsPlayed || 0} rds)`);
+    const extra = candidates.length - 1 - others.length;
+    return `Also matched: ${others.join(', ')}${extra > 0 ? `, +${extra} more` : ''}. Use a fuller name or SteamID.`;
+  }
+
+  /** Best single match from searchPlayers(), or null. */
+  async searchPlayer(identifier, opts = {}) {
+    const results = await this.searchPlayers(identifier, opts);
+    return results.length ? results[0] : null;
   }
 
   async upsertPlayerStats(eosID, fields) {
@@ -521,13 +640,22 @@ export default class EloDatabase {
     }
   }
 
-  async getPlayerRank(consRating, minRounds = 0) {
-    if (!this.sequelize) return 0;
+  /**
+   * 1-based CSR rank of a player. Both sides of the comparison are evaluated in
+   * SQL against the player's own row: passing in a CSR computed in JS let a
+   * FLOAT round-trip mismatch rank a player behind themselves.
+   */
+  async getPlayerRank(eosID, minRounds = 0) {
+    if (!this.sequelize || !eosID) return 0;
     try {
       return await this._executeWithRetry(async () => {
+        const qi = this.sequelize.getQueryInterface();
+        const csr = `(mu - (${EloCalculator.SIGMA_MULTIPLIER} * sigma))`;
+        const table = qi.queryGenerator.quoteTable(this.models.PlayerStats.getTableName());
+        const own = `(SELECT ${csr} FROM ${table} WHERE ${qi.quoteIdentifier('eosID')} = ${this.sequelize.escape(String(eosID))})`;
+
         const whereClause = minRounds > 0 ? { roundsPlayed: { [Sequelize.Op.gte]: minRounds } } : {};
-        // Use Number(consRating) to prevent SQL injection since NaN-coercion produces an invalid but harmless query
-        whereClause[Sequelize.Op.and] = Sequelize.literal(`(mu - (${EloCalculator.SIGMA_MULTIPLIER} * sigma)) > ${Number(consRating)}`);
+        whereClause[Sequelize.Op.and] = Sequelize.literal(`${csr} > ${own}`);
 
         const higherRanked = await this.models.PlayerStats.count({
           where: whereClause
@@ -535,7 +663,7 @@ export default class EloDatabase {
         return higherRanked + 1;
       });
     } catch (error) {
-      Logger.verbose('EloTracker', 1, `[DB] Error fetching player rank for consRating ${consRating}: ${error.message}`);
+      Logger.verbose('EloTracker', 1, `[DB] Error fetching player rank for eosID ${eosID}: ${error.message}`);
       return 0;
     }
   }

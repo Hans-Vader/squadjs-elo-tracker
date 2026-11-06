@@ -32,9 +32,13 @@
  * - onEloAdminCommand enforces ChatAdmin channel restriction internally.
  *   The caller must still register the event listener.
  * - !eloadmin reset resets mu, sigma, wins, losses, and roundsPlayed
- *   to defaults. It does NOT delete the DB record.
+ *   to defaults. It does NOT delete the DB record. It acts only on an
+ *   unambiguous match (EloDatabase.isUnambiguous); otherwise it lists
+ *   the candidates and resets nothing.
  * - !elo with no sub-command falls through to the player lookup
- *   path using the full args string as the identifier.
+ *   path using the full args string as the identifier. Name lookups
+ *   are ranked (EloDatabase.searchPlayers) and append an "Also
+ *   matched" line when the term was not an unambiguous hit.
  *
  *   Calculates and displays a "Competitive Skill Rank" (CSR) (μ - 3.0σ)
  *   as the primary player rank to encourage active play.
@@ -46,22 +50,23 @@
  */
 
 import Logger from '../../core/logger.js';
-
-const SIGMA_MULTIPLIER = 3.0;
+import EloCalculator from './elo-calculator.js';
+import EloDatabase from './elo-database.js';
 
 const EloCommands = {
   register(tracker) {
 
-    // Shared respond helper — wraps rcon.warn with logging
+    // Shared respond helper — wraps rcon.warn with logging.
+    // eosID fallback: Epic players have no steamID and would otherwise get no reply.
     tracker.respond = async function(player, msg) {
       const name = player?.name || 'Unknown';
-      const steamID = player?.steamID;
-      Logger.verbose('EloTracker', 2, `[Response to ${name} (${steamID || 'Unknown'})]\n${msg}`);
-      if (steamID) {
+      const target = player?.steamID || player?.eosID;
+      Logger.verbose('EloTracker', 2, `[Response to ${name} (${target || 'Unknown'})]\n${msg}`);
+      if (target) {
         try {
-          await this.server.rcon.warn(steamID, msg);
+          await this.server.rcon.warn(target, msg);
         } catch (err) {
-          Logger.verbose('EloTracker', 1, `[EloCommands] rcon.warn failed for ${steamID}: ${err.message}`);
+          Logger.verbose('EloTracker', 1, `[EloCommands] rcon.warn failed for ${target}: ${err.message}`);
         }
       }
       return msg;
@@ -80,7 +85,7 @@ const EloCommands = {
         .split(/\s+/)
         .filter(Boolean);
       const sub = args[0]?.toLowerCase();
-      const player = info.player || { steamID: info.steamID, name: info.playerName };
+      const player = info.player || { steamID: info.steamID, eosID: info.eosID, name: info.playerName };
 
       // !elo help
       if (sub === 'help') {
@@ -114,9 +119,13 @@ const EloCommands = {
       // !elo (no args) or !elo <identifier> — lookup
       const identifier = sub ? args.join(' ') : (player.steamID || player.eosID);
       try {
-        const record = await this._findPlayerByIdentifier(identifier);
+        const candidates = await this._findPlayerCandidates(identifier);
+        const record = candidates[0];
         if (!record) {
-          return await this.respond(player, `No ELO record found for: ${identifier}`);
+          return await this.respond(player, [
+            `No ELO record found for: ${identifier}`,
+            'Type !elo help for available commands.'
+          ].join('\n'));
         }
 
         const minRounds = this.options.minRoundsForLeaderboard;
@@ -125,7 +134,7 @@ const EloCommands = {
         if (record.roundsPlayed < minRounds) {
           rankLine = `Rank: Provisional (${record.roundsPlayed}/${minRounds} rounds)`;
         } else {
-          const rank = await this.db.getPlayerRank(consRating, minRounds);
+          const rank = await this.db.getPlayerRank(record.eosID, minRounds);
           const total = await this.db.getTotalPlayers();
           rankLine = `Rank: #${rank} (of ${total} total)`;
         }
@@ -135,8 +144,9 @@ const EloCommands = {
           rankLine,
           `CSR: ${consRating.toFixed(2)} (μ - 3.0σ)`,
           `Estimated Skill: ${record.mu.toFixed(2)} μ | Certainty: ${record.sigma.toFixed(2)} σ`,
-          `Record: ${record.wins}W / ${record.losses}L (${record.roundsPlayed} rounds)`
-        ].join('\n'));
+          `Record: ${record.wins}W / ${record.losses}L (${record.roundsPlayed} rounds)`,
+          EloDatabase.formatOtherMatches(candidates)
+        ].filter(Boolean).join('\n'));
       } catch (err) {
         Logger.verbose('EloTracker', 1, `[EloCommands] Player lookup failed: ${err.message}`);
         return await this.respond(player, 'Failed to retrieve player stats.');
@@ -156,7 +166,7 @@ const EloCommands = {
         .split(/\s+/)
         .filter(Boolean);
       const sub = args[0]?.toLowerCase();
-      const player = info.player || { steamID: info.steamID, name: info.playerName };
+      const player = info.player || { steamID: info.steamID, eosID: info.eosID, name: info.playerName };
 
       if (!sub || sub === 'help') {
         return await this.respond(player, [
@@ -188,9 +198,19 @@ const EloCommands = {
           return await this.respond(player, 'Usage: !eloadmin reset <name | steamID | eosID>');
         }
         try {
-          const record = await this._findPlayerByIdentifier(identifier);
+          // Destructive: act only on an unambiguous match, never on a guess.
+          const candidates = await this._findPlayerCandidates(identifier);
+          const record = candidates[0];
           if (!record) {
             return await this.respond(player, `No player found: ${identifier}`);
+          }
+          if (!EloDatabase.isUnambiguous(candidates)) {
+            const names = candidates.slice(0, 5).map((p) => `${String(p.name || '?').trim()} (${p.roundsPlayed || 0} rds)`);
+            return await this.respond(player, [
+              `Ambiguous: "${identifier}" is not an exact match.`,
+              `Matched: ${names.join(', ')}`,
+              'Re-run with the full name or a SteamID/EOS ID.'
+            ].join('\n'));
           }
           const defaults = { mu: EloCalculator.MU_DEFAULT, sigma: EloCalculator.SIGMA_DEFAULT, wins: 0, losses: 0, roundsPlayed: 0 };
           await this.db.upsertPlayerStats(record.eosID, defaults);

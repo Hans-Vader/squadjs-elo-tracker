@@ -16,6 +16,7 @@
  *     sendDiscordMessage(channel, content, suppressErrors)
  *       Resilient send — normalises embed/embeds, handles 429 with
  *       one automatic retry, and includes a Discord.js v12 fallback.
+ *       Errors name the channel (#name (id)).
  *     buildRoundSummaryEmbed(data)      — Post-round results embed.
  *     buildRoundStartEmbed(data, mode)  — Pre-round team balance embed.
  *     buildPlayerStatsEmbed(...)        — Per-player rank and stats embed.
@@ -26,8 +27,9 @@
  *     buildClanStatsEmbed(...)          — Per-clan stats and roster embed.
  *     buildClansLeaderboardEmbed(...)   — Top-N clan leaderboard embed.
  *     registerDiscordCommands(tracker)
- *       Attaches onDiscordMessage and _findPlayerByIdentifier onto
- *       the tracker instance.
+ *       Attaches onDiscordMessage and _findPlayerCandidates onto the
+ *       tracker instance. _findPlayerCandidates is shared with the
+ *       in-game commands so every lookup resolves names identically.
  *
  *   Calculates and displays a "Conservative Rating" (μ - 3σ) 
  *   as the primary player rank to encourage active play.
@@ -43,7 +45,13 @@
  *   for Discord.js v13+ compatibility, then falls back to the legacy
  *   { embed } shape on a 'Cannot send an empty message' error.
  * - Rate limit (429) handling reads retryAfter from the error object
- *   or the retry-after header. Only one retry is attempted.
+ *   or the retry-after header (plain object or Headers-like .get()),
+ *   defaulting to 5s. Only one retry is attempted.
+ * - The !elo prefix test is case-insensitive and word-bounded, so
+ *   `!ELO` works and `!elophant` is ignored.
+ * - Name lookups are ranked (EloDatabase.searchPlayers); runner-up
+ *   matches go in the stats embed footer. `!elo reset <identifier>`
+ *   requires an unambiguous match (EloDatabase.isUnambiguous).
  * - registerDiscordCommands() mutates the tracker instance. It relies
  *   on tracker.db, tracker.session, tracker.eloCache, tracker.options,
  *   tracker.discordAdminChannel, and tracker.discordPublicChannel.
@@ -62,6 +70,7 @@
 
 import Logger from '../../core/logger.js';
 import EloCalculator from './elo-calculator.js';
+import EloDatabase from './elo-database.js';
 import { extractRawPrefix, normalizeTag } from './elo-clan-grouping.js';
 
 const formatDuration = (ms) => {
@@ -156,18 +165,29 @@ export const EloDiscord = {
       }
     }
 
+    const channelId = channel?.id || 'unknown';
+    const channelName = channel?.name || 'unknown';
+
     const executeSend = async (data, isRetry = false) => {
       try {
         await channel.send(data);
         return true;
       } catch (err) {
-        // Rate Limit Handling (429)
+        // Rate Limit Handling (429): discord.js v13+ puts retryAfter (ms) on the
+        // error, v12 a retry-after header (seconds), either as a Headers-like
+        // object with .get() or as plain properties. Default 5s if unreadable.
         if (err.status === 429 && !isRetry) {
-          let waitTime = 1000;
-          if (err.retryAfter) waitTime = err.retryAfter;
-          else if (err.headers && err.headers['retry-after']) waitTime = parseFloat(err.headers['retry-after']) * 1000;
+          const header = (key) => (typeof err.headers?.get === 'function' ? err.headers.get(key) : err.headers?.[key]);
+          let waitTime = 5000;
+          if (typeof err.retryAfter === 'number' && err.retryAfter > 0) {
+            waitTime = err.retryAfter;
+          } else {
+            const seconds = parseFloat(header('retry-after'));
+            if (seconds > 0) waitTime = seconds * 1000;
+          }
+          const scope = header('X-RateLimit-Global') || header('x-ratelimit-global') ? 'GLOBAL' : 'per-route';
 
-          Logger.verbose('EloTracker', 1, `Discord 429 Rate Limit hit. Waiting ${waitTime}ms before retry.`);
+          Logger.verbose('EloTracker', 1, `Discord 429 Rate Limit (${scope}) on #${channelName} (${channelId}). Waiting ${waitTime}ms before retry.`);
           await new Promise((resolve) => setTimeout(resolve, waitTime));
           return executeSend(data, true);
         }
@@ -187,7 +207,7 @@ export const EloDiscord = {
       await executeSend(payload);
       return true;
     } catch (err) {
-      const errMsg = `Discord send failed: ${err.message}`;
+      const errMsg = `Discord send failed on #${channelName} (${channelId}): ${err.message}`;
       if (!suppressErrors) throw new Error(errMsg);
       Logger.verbose('EloTracker', 1, errMsg);
       return false;
@@ -289,7 +309,7 @@ export const EloDiscord = {
     };
   },
 
-  buildPlayerStatsEmbed(player, rank, totalRanked, totalPlayers, provisional = false, localLeaderboard = null, minRounds = 10) {
+  buildPlayerStatsEmbed(player, rank, totalRanked, totalPlayers, provisional = false, localLeaderboard = null, minRounds = 10, otherMatches = null) {
     const { name, mu, sigma, wins, losses, roundsPlayed } = player;
 
     const consRating = mu - (EloCalculator.SIGMA_MULTIPLIER * sigma);
@@ -375,6 +395,7 @@ export const EloDiscord = {
       title: `📊 Player Stats for ${name}`,
       description: description,
       fields: fields,
+      ...(otherMatches ? { footer: { text: otherMatches } } : {}),
       timestamp: new Date().toISOString()
     };
   },
@@ -575,7 +596,8 @@ export const EloDiscord = {
       if (message.author.bot) return;
 
       const content = message.content.trim();
-      if (!content.startsWith('!elo')) return;
+      // Case-insensitive like in-game (`!ELO`), word-bounded so `!elophant` is not a lookup.
+      if (!/^!elo(\s|$)/i.test(content)) return;
 
       const isAdminChannel = this.discordAdminChannel &&
         message.channel.id === this.options.discordAdminChannelID;
@@ -651,7 +673,7 @@ export const EloDiscord = {
             return;
           }
 
-          if (identifier === 'confirm') {
+          if (identifier.toLowerCase() === 'confirm') {
             if (!this._resetConfirmPending || Date.now() - this._resetConfirmPending.timestamp > 30000) {
               await message.reply('⚠️ No pending reset confirmation, or confirmation expired.');
               this._resetConfirmPending = null;
@@ -698,9 +720,20 @@ export const EloDiscord = {
             roundsPlayed: 0
           };
           try {
-            const player = await this._findPlayerByIdentifier(identifier);
+            // Destructive: act only on an unambiguous match, never on a guess.
+            const candidates = await this._findPlayerCandidates(identifier);
+            const player = candidates[0];
             if (!player) {
               await message.reply(`No player found: ${identifier}`);
+              return;
+            }
+            if (!EloDatabase.isUnambiguous(candidates)) {
+              const names = candidates.slice(0, 5).map((p) => `${String(p.name || '?').trim()} (${p.roundsPlayed || 0} rds)`);
+              await message.reply([
+                `Ambiguous: \`${identifier}\` is not an exact match — nothing was reset.`,
+                `Matched: ${names.join(', ')}`,
+                'Re-run with the full name or a SteamID/EOS ID.'
+              ].join('\n'));
               return;
             }
             await this.db.upsertPlayerStats(player.eosID, defaults);
@@ -830,11 +863,11 @@ export const EloDiscord = {
             },
             {
               name: 'Estimated Skill (μ — "Mu")',
-              value: `Your estimated performance level. Everyone starts at ${initialMu}. This number goes up when you win and decreases when you lose based on the strength of your opponents.`
+              value: `Your estimated performance level. Everyone starts at ${initialMu.toFixed(2)}. This number goes up when you win and decreases when you lose based on the strength of your opponents.`
             },
             {
               name: 'System Certainty (σ — "Sigma")',
-              value: `This is the system's confidence in your rank. It starts at ${initialSigma} and drops as you play more games, making your rank more stable.`
+              value: `This is the system's confidence in your rank. It starts at ${initialSigma.toFixed(2)} and drops as you play more games, making your rank more stable.`
             },
             {
               name: 'The Calibration Goal',
@@ -895,7 +928,7 @@ export const EloDiscord = {
 
         const minRounds = this.options.minRoundsForLeaderboard;
         const provisional = player.roundsPlayed < minRounds;
-        const rank = provisional ? null : await this.db.getPlayerRank(player.mu - (EloCalculator.SIGMA_MULTIPLIER * player.sigma), minRounds);
+        const rank = provisional ? null : await this.db.getPlayerRank(player.eosID, minRounds);
         const totalRanked = await this.db.getTotalRankedPlayers(minRounds);
         const totalPlayers = await this.db.getTotalPlayers();
 
@@ -1056,7 +1089,8 @@ export const EloDiscord = {
 
       // !elo <identifier> — look up another player
       const identifier = args.join(' ');
-      const player = await this._findPlayerByIdentifier(identifier);
+      const candidates = await this._findPlayerCandidates(identifier);
+      const player = candidates[0];
       if (!player) {
         await message.reply(`No ELO record found for: ${identifier}`);
         return;
@@ -1064,7 +1098,7 @@ export const EloDiscord = {
 
       const minRounds = this.options.minRoundsForLeaderboard;
       const provisional = player.roundsPlayed < minRounds;
-      const rank = provisional ? null : await this.db.getPlayerRank(player.mu - (EloCalculator.SIGMA_MULTIPLIER * player.sigma), minRounds);
+      const rank = provisional ? null : await this.db.getPlayerRank(player.eosID, minRounds);
       const totalRanked = await this.db.getTotalRankedPlayers(minRounds);
       const totalPlayers = await this.db.getTotalPlayers();
 
@@ -1076,11 +1110,19 @@ export const EloDiscord = {
         localLeaderboard = neighborhood.map((p, i) => ({ ...p, actualRank: offset + 1 + i }));
       }
 
-      await EloDiscord.sendDiscordMessage(message.channel, { embeds: [EloDiscord.buildPlayerStatsEmbed(player, rank, totalRanked, totalPlayers, provisional, localLeaderboard, minRounds)] });
+      const otherMatches = EloDatabase.formatOtherMatches(candidates);
+      await EloDiscord.sendDiscordMessage(message.channel, { embeds: [EloDiscord.buildPlayerStatsEmbed(player, rank, totalRanked, totalPlayers, provisional, localLeaderboard, minRounds, otherMatches)] });
     };
 
-    tracker._findPlayerByIdentifier = async function(identifier) {
-      return await this.db.searchPlayer(identifier);
+    // Ranked candidates, best first — shared by in-game and Discord lookups and resets.
+    // Players on the server win ties within a match tier.
+    tracker._findPlayerCandidates = async function(identifier) {
+      const onlineIDs = new Set();
+      for (const p of this.server.players || []) {
+        if (p?.eosID) onlineIDs.add(p.eosID);
+        if (p?.steamID) onlineIDs.add(p.steamID);
+      }
+      return await this.db.searchPlayers(identifier, { onlineIDs });
     };
   }
 }
