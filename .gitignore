@@ -1,21 +1,5 @@
 *.jsonl
 *.json
 
-# Test fixtures and the dev package manifest are tracked despite the blanket JSON ignore
-!testing/fixtures/*.json
-!testing/fixtures/*.jsonl
-!/package.json
-
-# Dev dependencies (test harness only)
-/node_modules/
-/package-lock.json
-
-# IDE / reference material
-/.idea/
-/trueskill2.pdf
-
 # Docker / local env
 /.env
-./squadreplay-fetcher/*
-./squadreplay-fetcher
-*.sqrx
