@@ -152,14 +152,14 @@ squad-server/
 **Public (all players):**
 
 - `!elo` — View your current ELO rating and record.
-- `!elo <name | steamID>` — Look up another player's rating.
+- `!elo <name | steamID>` — Look up another player's rating. Partial names are ranked: an exact name (with or without clan tag) beats prefix and substring hits, online players and more rounds win ties, and other candidates are listed.
 - `!elo leaderboard` — Top 10 players by CSR.
 - `!elo help` — Show available commands.
 
 **Admin (ChatAdmin channel only):**
 
 - `!eloadmin status` — Plugin status, session count, and round info.
-- `!eloadmin reset <name | steamID>` — Reset a player to default rating.
+- `!eloadmin reset <name | steamID>` — Reset a player to default rating. Requires an unambiguous match; otherwise the candidates are listed and nothing is reset.
 
 ### Discord Commands
 
@@ -181,6 +181,7 @@ squad-server/
 - `!elo backup` — Export player stats as JSON.
 - `!elo restore` — Restore from an attached JSON backup.
 - `!elo reset confirm` — Wipe **ALL** database ratings.
+- `!elo reset <name | steamID | eosID>` — Reset a single player. Requires an unambiguous match, like `!eloadmin reset`.
 
 ---
 

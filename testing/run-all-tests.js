@@ -41,6 +41,7 @@ export async function runAll() {
     { name: 'EloSessionManager', file: './test-elo-session-manager.js' },
     { name: 'EloClanGrouping', file: './test-clan-grouping.js' },
     { name: 'EloDatabase', file: './test-elo-database.js' },
+    { name: 'EloLookup', file: './test-elo-lookup.js' },
     { name: 'EloTracker', file: './test-elo-tracker.js' },
     { name: 'EloSimulation', file: './test-elo-simulation.js', iterations: 20 }
   ];
