@@ -448,9 +448,11 @@ export default class EloDatabase {
           limit
         });
 
+        // Tiers are always scored from the name in JS: the exact query only
+        // guarantees inclusion, since a collation like MySQL's
+        // utf8mb4_unicode_ci also matches "jose" against "José".
         const collected = new Map();
-        for (const r of exact) collected.set(r.eosID, { row: r.toJSON(), tier: 1 });
-        for (const r of fuzzy) {
+        for (const r of [...exact, ...fuzzy]) {
           if (!collected.has(r.eosID)) collected.set(r.eosID, { row: r.toJSON(), tier: null });
         }
         return [...collected.values()];

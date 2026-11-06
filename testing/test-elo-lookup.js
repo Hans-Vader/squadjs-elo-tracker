@@ -119,6 +119,20 @@ export default async function runLookupTests(runTest) {
     assert(EloDatabase.formatOtherMatches(results) === null, 'no hint expected for a unique exact hit');
   });
 
+  await runTest('Search: exact-name SQL hits are re-checked by name (accent-insensitive collation)', async () => {
+    const db = await freshDb([{ eosID: 'eos_jose', name: ' José', roundsPlayed: 50 }]);
+    // MySQL utf8mb4_unicode_ci treats "jose" and "José" as equal; SQLite doesn't,
+    // so emulate that collation for the exact-name query only.
+    const realLike = db._likeLiteral.bind(db);
+    db._likeLiteral = (column, term, opts = {}) => (opts.exact
+      ? Sequelize.literal("TRIM(name) = 'José'")
+      : realLike(column, term, opts));
+    const results = await db.searchPlayers('jose');
+    assert(results[0]?.name === ' José', `expected José as best guess, got ${results[0]?.name}`);
+    assert(results[0]._matchTier !== 1, 'an accent-folded hit must not count as an exact name');
+    assert(!EloDatabase.isUnambiguous(results), 'a reset must not act on an accent-folded hit');
+  });
+
   await runTest('Search: exact ID short-circuits as tier 0', async () => {
     const db = await freshDb([{ eosID: 'abc', steamID: '7656', name: 'Someone' }]);
     const bySteam = await db.searchPlayers('7656');

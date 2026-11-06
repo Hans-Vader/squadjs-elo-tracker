@@ -97,6 +97,8 @@ export async function runAll() {
       }
       results[suite.name].push(suiteRunData);
       console.log('');
+      // A suite that cannot load fails identically on every iteration; report it once.
+      if (brokenSuites.includes(suite.name)) break;
     }
   }
 
