@@ -73,32 +73,6 @@ rl.on('line', (line) => {
   matches.push({ matchId, endedAt, outcome, players, team1, team2 });
 });
 
-// --- Win probability ---
-function winProbability(team1, team2, BETA) {
-  const getRatio = (p) => p.participationRatio ?? 1.0;
-  
-  let effectiveN1  = team1.reduce((s, p) => s + getRatio(p), 0);
-  let effectiveN2  = team2.reduce((s, p) => s + getRatio(p), 0);
-
-  const scale1 = effectiveN1 > 50.0 ? 50.0 / effectiveN1 : 1.0;
-  const scale2 = effectiveN2 > 50.0 ? 50.0 / effectiveN2 : 1.0;
-
-  effectiveN1 *= scale1;
-  effectiveN2 *= scale2;
-
-  const teamMu1      = team1.reduce((s, p) => s + p.mu * getRatio(p), 0) * scale1;
-  const teamMu2      = team2.reduce((s, p) => s + p.mu * getRatio(p), 0) * scale2;
-  
-  const teamSigmaSq1 = team1.reduce((s, p) => s + (p.sigma * p.sigma + BETA * BETA) * getRatio(p), 0) * scale1;
-  const teamSigmaSq2 = team2.reduce((s, p) => s + (p.sigma * p.sigma + BETA * BETA) * getRatio(p), 0) * scale2;
-  const c            = Math.sqrt(teamSigmaSq1 + teamSigmaSq2);
-  
-  const nTotal       = effectiveN1 + effectiveN2;
-  const epsilon      = Math.sqrt(nTotal) * BETA * Math.SQRT2 * EloCalculator._erfInv(0.01);
-  const t            = (teamMu1 - teamMu2) / c;
-  return EloCalculator._cdf(t - epsilon / c);
-}
-
 // --- Replay ---
 function replayMatches(matches, BETA, TAU) {
   EloCalculator.BETA = BETA;
@@ -119,7 +93,7 @@ function replayMatches(matches, BETA, TAU) {
     const t1ratings = team1.map(p => ({ eosID: p.eosID, ...getRating(p.eosID) }));
     const t2ratings = team2.map(p => ({ eosID: p.eosID, ...getRating(p.eosID) }));
 
-    const pTeam1 = Math.min(0.999, Math.max(0.001, winProbability(t1ratings, t2ratings, BETA)));
+    const pTeam1 = Math.min(0.999, Math.max(0.001, EloCalculator.winProbability(t1ratings, t2ratings)));
     const p      = outcome === 'team1win' ? pTeam1 : 1 - pTeam1;
     totalLoss   += -Math.log(p) * weight;
 

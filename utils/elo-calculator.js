@@ -16,6 +16,8 @@
  *     computeTeamUpdate(team1, team2, outcome)
  *       Core update method — returns raw deltaMu/deltaSigma per player,
  *       normalising effective team sizes to prevent variance inflation.
+ *     winProbability(team1, team2)
+ *       P(team 1 wins) from the same team aggregation as computeTeamUpdate.
  *     getDefaultRating()
  *       Returns the default { mu, sigma } for a new player.
  *     BETA, DRAW_PROBABILITY
@@ -339,6 +341,17 @@ export default class EloCalculator {
         wVal
       }
     };
+  }
+
+  /**
+   * P(team 1 wins) under the current BETA / DRAW_PROBABILITY, derived from the same
+   * team aggregation as computeTeamUpdate (so the two cannot drift apart).
+   * Expects two non-empty teams of { mu, sigma, participationRatio? }.
+   * @returns {number}
+   */
+  static winProbability(team1, team2) {
+    const { tRaw, epsilon, c } = this.computeTeamUpdate(team1, team2, 'team1win').debug;
+    return this._cdf(tRaw - epsilon / c);
   }
 
   /**
