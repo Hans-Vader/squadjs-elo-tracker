@@ -49,4 +49,12 @@ export default async function runDiscordTests(runTest) {
     const names = EloDiscord.buildRoundSummaryEmbed({ ...data, timeline: { summary, spark: '▅▆' } }).fields.map(f => f.name);
     assert.equal(names[names.indexOf('Disparity') + 1], 'Round Timeline');
   });
+
+  await runTest('buildPredictionsEmbed: all rows excluded still shows exclusion counts', async () => {
+    const row = { gameMode: 'RAAS', winningTeamID: 1, pStart: 0.8, muDeltaStart: 1.0, leadEnd: 100, leadAt10: 10, leadAt20: 20,
+      leadAt30: 30, partial: true, scrambledAtMin: null };
+    const embed = EloDiscord.buildPredictionsEmbed(aggregatePredictions([row]), 100);
+    assert.ok(embed.title.includes('last 1 rated rounds'), embed.title);
+    assert.ok(embed.description.startsWith('0 usable · excluded: 0 scrambled, 1 partial'), embed.description);
+  });
 }

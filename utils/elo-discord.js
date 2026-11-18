@@ -619,10 +619,10 @@ export const EloDiscord = {
     const pct = (x) => (x == null ? 'n/a' : `${Math.round(x * 100)}%`);
     const embed = {
       color: 0x3498db,
-      title: `📈 Prediction Check — last ${limit} rated rounds`,
+      title: `📈 Prediction Check — last ${stats.total || limit} rated rounds`,
       timestamp: new Date().toISOString()
     };
-    if (!stats.usable) return { ...embed, description: 'No timeline data yet.' };
+    if (!stats.total) return { ...embed, description: 'No timeline data yet.' };
 
     const e = stats.excluded;
     const margin = (b) => `${b.label}: Ø ${b.avgMargin == null ? 'n/a' : Math.round(b.avgMargin)}, dominant ${pct(b.dominantRate)}`;
