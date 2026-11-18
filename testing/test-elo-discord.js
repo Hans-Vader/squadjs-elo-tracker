@@ -38,4 +38,15 @@ export default async function runDiscordTests(runTest) {
   await runTest('buildPredictionsEmbed', async () => {
     assert.equal(EloDiscord.buildPredictionsEmbed(aggregatePredictions([]), 100).description, 'No timeline data yet.');
   });
+
+  await runTest('buildRoundSummaryEmbed: timeline field after Disparity', async () => {
+    const team = { ...m(25), avgDeltaMu: 0.1, avgDeltaSigma: 0.05, spreadSnapshot: [] };
+    const data = { layerName: 'L', winningTeamID: 1, ticketDiff: 120, roundDuration: 3_600_000, totalPlayerCount: 100,
+      playersUpdatedCount: 100, team1Summary: team, team2Summary: team, liveT1: m(25), liveT2: m(25), calculationDuration: 5 };
+    const summary = { pStartSec: 180, favorite: 1, muDeltaStart: 0.4, favoriteWon: true, maxLeadT1: 95, maxLeadT1Min: 18,
+      maxLeadT2: 0, maxLeadT2Min: null, leadChanges: 0, decidedAtMin: 3, partial: false, scrambledAtMin: null };
+    assert.ok(!EloDiscord.buildRoundSummaryEmbed({ ...data, timeline: null }).fields.some(f => f.name === 'Round Timeline'));
+    const names = EloDiscord.buildRoundSummaryEmbed({ ...data, timeline: { summary, spark: '▅▆' } }).fields.map(f => f.name);
+    assert.equal(names[names.indexOf('Disparity') + 1], 'Round Timeline');
+  });
 }

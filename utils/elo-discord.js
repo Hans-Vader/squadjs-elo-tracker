@@ -209,7 +209,8 @@ export const EloDiscord = {
       team2Summary,
       liveT1,
       liveT2,
-      calculationDuration
+      calculationDuration,
+      timeline
     } = data;
 
     const winnerText = winningTeamID === 1 ? 'Team 1' : (winningTeamID === 2 ? 'Team 2' : 'Draw');
@@ -261,7 +262,7 @@ export const EloDiscord = {
       return `${muPart} ${sigmaPart}`;
     };
 
-    return {
+    const embed = {
       color: vUI.color,
       title: '🏆 Round Ended',
       description: `**Veterancy: ${vUI.icon} ${vUI.label}**\n*Percentage of established "Regular" players (10+ rounds) in the match.*\n\n${generateMatrixTable(liveT1, liveT2)}`,
@@ -290,6 +291,13 @@ export const EloDiscord = {
       ],
       timestamp: new Date().toISOString()
     };
+
+    // After 'Disparity', so the inline Map/Winner/Duration/Player Count row stays intact
+    if (timeline) {
+      const at = embed.fields.findIndex(f => f.name === 'Disparity') + 1;
+      embed.fields.splice(at, 0, EloDiscord.buildTimelineField({ ...timeline.summary, winningTeamID }, timeline.spark));
+    }
+    return embed;
   },
 
   buildPlayerStatsEmbed(player, rank, totalRanked, totalPlayers, provisional = false, localLeaderboard = null, minRounds = 10) {

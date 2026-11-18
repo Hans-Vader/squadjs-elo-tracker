@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import Logger from '../../core/logger.js';
 import EloTracker from '../plugins/elo-tracker.js';
 
 export default async function runTrackerTests(runTest) {
@@ -36,6 +37,7 @@ export default async function runTrackerTests(runTest) {
     },
     bulkIncrementPlayerStats: async () => {},
     insertRoundHistory: async () => {},
+    insertRoundTimeline: async () => {},
     calls: { bulkIncrement: 0, insertHistory: 0 }
   });
 
@@ -229,5 +231,75 @@ export default async function runTrackerTests(runTest) {
     await t.onTeamBalancerScramble({});
     clearTimeout(t._scrambleEmbedTimer);
     assert.equal(typeof t.session.scrambledAt, 'number');
+  });
+
+  // Rated round with 6 connected players and two participants; captures match log + timeline row
+  const mountRoundEnd = async () => {
+    const { server, t } = await mountReal();
+    t.session.endRound = () => [
+      { eosID: 'p1', name: 'P1', assignedTeamID: 1, participationRatio: 1 },
+      { eosID: 'p2', name: 'P2', assignedTeamID: 2, participationRatio: 1 }
+    ];
+    server.players = Array(6).fill(0).map((_, i) => ({ eosID: `p${i}`, teamID: i % 2 + 1 }));
+    const captured = { record: null, timelineRows: [] };
+    t._appendMatchLog = async (rec) => { captured.record = rec; };
+    t.db.insertRoundHistory = async () => ({ id: 7 });
+    t.db.insertRoundTimeline = async (row) => { captured.timelineRows.push(row); };
+    const twoSamples = () => {
+      t.session.startRound(Date.now() - 20 * 60_000);
+      server.tickets = [300, 300];
+      t._recordTicketSample(t.session.roundStartTime + 61_000);
+      server.tickets = [250, 200];
+      t._recordTicketSample(t.session.roundStartTime + 200_000);
+    };
+    return { server, t, captured, twoSamples };
+  };
+
+  await runTest('ROUND_ENDED: timeline with final sample in log and DB', async () => {
+    const { server, captured, twoSamples } = await mountRoundEnd();
+    twoSamples();
+    await server.emit('ROUND_ENDED', { winner: { team: '1', tickets: '120' }, loser: { team: '2', tickets: '0' } });
+    const { record, timelineRows } = captured;
+    assert.equal(record.timeline.samples.length, 3);
+    assert.deepEqual(record.timeline.samples[2].slice(1, 3), [120, 0]);
+    assert.equal(record.timeline.summary.partial, false);
+    assert.equal(timelineRows.length, 1);
+    assert.equal(timelineRows[0].roundHistoryId, 7);
+    assert.equal(timelineRows[0].winningTeamID, 1);
+    assert.equal(timelineRows[0].gameMode, 'AAS');
+  });
+
+  await runTest('ROUND_ENDED: draw / legacy payload skips final sample, no throw', async () => {
+    const { server, captured, twoSamples } = await mountRoundEnd();
+    twoSamples();
+    await server.emit('ROUND_ENDED', { winner: null, loser: null });
+    assert.equal(captured.record.timeline.samples.length, 2);
+    assert.equal(captured.record.timeline.summary.favoriteWon, null);
+    assert.equal(captured.timelineRows[0].winningTeamID, null);
+
+    twoSamples();
+    await server.emit('ROUND_ENDED', { winner: 1, tickets: 20 });
+    assert.equal(captured.record.timeline.samples.length, 2);
+    assert.equal(captured.timelineRows[1].winningTeamID, null);
+  });
+
+  await runTest('ROUND_ENDED: no samples → no timeline, hint logged once', async () => {
+    const { server, t, captured } = await mountRoundEnd();
+    const hints = () => Logger.messages.filter(m => m.includes('No live ticket data')).length;
+    const before = hints();
+    for (let i = 0; i < 2; i++) {
+      t.session.startRound(Date.now() - 600_000);
+      await server.emit('ROUND_ENDED', { winner: { team: '1', tickets: '120' }, loser: { team: '2', tickets: '0' } });
+      assert.equal(captured.record.timeline, undefined);
+    }
+    assert.equal(captured.timelineRows.length, 0);
+    assert.equal(hints() - before, 1);
+  });
+
+  await runTest('pStartSec never below 60 s', async () => {
+    const { t } = await mountReal();
+    assert.equal(t._ticketPStartSec(), 180);
+    t.options.roundStartEmbedDelayMs = 30_000;
+    assert.equal(t._ticketPStartSec(), 60);
   });
 }

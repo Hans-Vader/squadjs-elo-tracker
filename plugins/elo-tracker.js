@@ -143,7 +143,7 @@ import EloSessionManager from '../utils/elo-session-manager.js';
 import EloCalculator from '../utils/elo-calculator.js';
 import { EloDiscord } from '../utils/elo-discord.js';
 import EloCommands from '../utils/elo-commands.js';
-import { isValidTickets, computeLead } from '../utils/elo-ticket-timeline.js';
+import { isValidTickets, computeLead, summarizeTimeline, sparkline } from '../utils/elo-ticket-timeline.js';
 
 export default class EloTracker extends BasePlugin {
   static version = '1.3.0';
@@ -744,6 +744,10 @@ export default class EloTracker extends BasePlugin {
       return;
     }
 
+    // --- Live ticket timeline ---
+    // Before the TrueSkill update: the final sample must still see pre-round ratings in eloCache.
+    const timeline = this._finishTicketTimeline(data, winningTeamID, roundEndTime);
+
     // --- Run TrueSkill ---
     const { team1Updates, team2Updates } = EloCalculator.computeTeamUpdate(
       team1Eligible.map(p => ({ ...getRating(p.eosID), participationRatio: p.participationRatio })),
@@ -851,6 +855,18 @@ export default class EloTracker extends BasePlugin {
       Logger.verbose('EloTracker', 1, `[onRoundEnded] DB write failed: ${err.message}`);
     }
 
+    // Fire-and-forget: one summary row per rated round (feeds !elo predictions)
+    if (timeline) {
+      this.db.insertRoundTimeline({
+        ...timeline.summary,
+        roundHistoryId: roundRecord?.id ?? null,
+        endedAt: roundEndTime,
+        layerName,
+        gameMode: gameMode ?? 'Unknown',
+        winningTeamID: [1, 2].includes(winningTeamID) ? winningTeamID : null
+      }).catch(err => Logger.verbose('EloTracker', 1, `[onRoundEnded] Timeline insert failed: ${err.message}`));
+    }
+
     const matchRecord = {
       ts: roundEndTime,
       matchId: roundEndTime.toString(),
@@ -907,6 +923,7 @@ export default class EloTracker extends BasePlugin {
         })
       ]
     };
+    if (timeline) matchRecord.timeline = timeline;
     this._appendMatchLog(matchRecord).catch(err => Logger.verbose('EloTracker', 1, `Failed to append match log: ${err.message}`));
 
     // Fire-and-forget database insert if enabled and roundRecord was created
@@ -964,7 +981,8 @@ export default class EloTracker extends BasePlugin {
           team2Summary,
           liveT1,
           liveT2,
-          calculationDuration
+          calculationDuration,
+          timeline: timeline ? { summary: timeline.summary, spark: sparkline(timeline.samples, timeline.startTickets) } : null
         });
         await EloDiscord.sendDiscordMessage(targetReportChannel, { embeds: [embed] });
       } catch (err) {
@@ -1032,6 +1050,40 @@ export default class EloTracker extends BasePlugin {
       totalPlayerCount: players.length,
       tickets: this._liveTickets()
     };
+  }
+
+  /** Second at which the favourite is fixed: the start-embed delay, but never before the first sample (60 s). */
+  _ticketPStartSec() {
+    return Math.max(60, (this.options.roundStartEmbedDelayMs ?? 180000) / 1000);
+  }
+
+  /**
+   * Closes the round's ticket timeline: appends the exact final score from ROUND_ENDED and summarises.
+   * Returns { startTickets, samples, summary } or null when SquadJS delivered no live tickets.
+   */
+  _finishTicketTimeline(data, winningTeamID, roundEndTime) {
+    const { ticketSamples: samples, ticketStart: startTickets, roundStartTime, scrambledAt } = this.session;
+    if (!samples.length) {
+      if (!this._noTicketHintLogged) {
+        this._noTicketHintLogged = true;
+        Logger.verbose('EloTracker', 1, 'No live ticket data from SquadJS – update SquadJS to the latest master (PR #452) to enable ticket timelines.');
+      }
+      return null;
+    }
+
+    const winnerTeam = parseInt(data?.winner?.team, 10);
+    const winnerTickets = parseInt(data?.winner?.tickets, 10);
+    const loserTickets = parseInt(data?.loser?.tickets, 10);
+    if ([1, 2].includes(winnerTeam) && Number.isFinite(winnerTickets) && Number.isFinite(loserTickets)) {
+      const [t1, t2] = winnerTeam === 1 ? [winnerTickets, loserTickets] : [loserTickets, winnerTickets];
+      samples.push(this._buildTicketSample(Math.round((roundEndTime - roundStartTime) / 1000), t1, t2));
+    }
+
+    const summary = summarizeTimeline(samples, startTickets, winningTeamID, {
+      pStartSec: this._ticketPStartSec(),
+      scrambledAtSec: scrambledAt ? (scrambledAt - roundStartTime) / 1000 : null
+    });
+    return { startTickets, samples, summary };
   }
 
   /** Current tickets vs. round start, or null without valid live data. */
