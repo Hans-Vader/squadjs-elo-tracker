@@ -50,6 +50,14 @@ export default class EloSessionManager {
     // Map<eosID, PlayerSession>
     this.sessions = new Map();
     this.roundStartTime = null;
+    this._resetTicketState();
+  }
+
+  // Live ticket state of the current round (filled by EloTracker._recordTicketSample)
+  _resetTicketState() {
+    this.ticketStart = null;   // [s1, s2] | null
+    this.ticketSamples = [];   // [sec, t1, t2, n1, n2, p1, muDelta][]
+    this.scrambledAt = null;   // ms timestamp | null
   }
 
   /**
@@ -60,6 +68,7 @@ export default class EloSessionManager {
   startRound(timestamp = Date.now()) {
     this.roundStartTime = timestamp;
     this.sessions.clear();
+    this._resetTicketState();
   }
 
   /**
@@ -233,5 +242,6 @@ export default class EloSessionManager {
   clear() {
     this.sessions.clear();
     this.roundStartTime = null;
+    this._resetTicketState();
   }
 }

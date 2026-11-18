@@ -1,3 +1,4 @@
+import assert from 'node:assert/strict';
 import EloTracker from '../plugins/elo-tracker.js';
 
 export default async function runTrackerTests(runTest) {
@@ -43,7 +44,10 @@ export default async function runTrackerTests(runTest) {
     startRound: () => {},
     updatePlayers: () => {},
     endRound: () => [],
-    roundStartTime: Date.now()
+    roundStartTime: Date.now(),
+    ticketStart: null,
+    ticketSamples: [],
+    scrambledAt: null
   });
 
   const mockOptions = {
@@ -56,6 +60,15 @@ export default async function runTrackerTests(runTest) {
   };
 
   const mockConnectors = {};
+
+  // Mounts the tracker with the real EloSessionManager (created by the constructor)
+  const mountReal = async () => {
+    const server = createMockServer();
+    const t = new EloTracker(server, mockOptions, mockConnectors);
+    t.db = createMockDb();
+    await t.mount();
+    return { server, t };
+  };
 
   await runTest('Mount: Initialization', async () => {
     const server = createMockServer();
@@ -153,5 +166,68 @@ export default async function runTrackerTests(runTest) {
 
     if (!bulkCalled) throw new Error('Failed to call bulkIncrementPlayerStats');
     if (!historyCalled) throw new Error('Failed to call insertRoundHistory');
+  });
+
+  await runTest('Tickets: sampling guards (60 s, invalid, 25 s throttle)', async () => {
+    const { server, t } = await mountReal();
+    const T0 = 1_000_000;
+    t.session.roundStartTime = T0;
+    server.players = [{ eosID: 'a', teamID: 1 }, { eosID: 'b', teamID: 2 }];
+    t.eloCache.set('a', { mu: 26, sigma: 3 });
+    t.eloCache.set('b', { mu: 25, sigma: 3 });
+    server.tickets = [300, 300]; t._recordTicketSample(T0 + 59_000); assert.equal(t.session.ticketSamples.length, 0);
+    server.tickets = [0, 0]; t._recordTicketSample(T0 + 61_000); assert.equal(t.session.ticketSamples.length, 0);
+    server.tickets = [300, 290]; t._recordTicketSample(T0 + 61_000);
+    assert.deepEqual(t.session.ticketSamples[0].slice(0, 5), [61, 300, 290, 1, 1]);
+    assert.equal(t.session.ticketSamples[0][6], 1);
+    t._recordTicketSample(T0 + 80_000); assert.equal(t.session.ticketSamples.length, 1);
+    t._recordTicketSample(T0 + 86_000); assert.equal(t.session.ticketSamples.length, 2);
+  });
+
+  await runTest('Tickets: start from currentLayer, fallback first sample', async () => {
+    const { server, t } = await mountReal();
+    const T0 = 1_000_000;
+    server.players = [{ eosID: 'a', teamID: 1 }, { eosID: 'b', teamID: 2 }];
+    server.tickets = [280, 290];
+
+    t.session.startRound(T0);
+    server.currentLayer.tickets = [250, 300];
+    t._recordTicketSample(T0 + 61_000);
+    assert.deepEqual(t.session.ticketStart, [250, 300]);
+
+    t.session.startRound(T0);
+    server.currentLayer.tickets = null;
+    t._recordTicketSample(T0 + 61_000);
+    assert.deepEqual(t.session.ticketStart, [280, 290]);
+  });
+
+  await runTest('Tickets: empty team gives null p1/muDelta', async () => {
+    const { server, t } = await mountReal();
+    const T0 = 1_000_000;
+    t.session.startRound(T0);
+    server.players = [{ eosID: 'a', teamID: 1 }];
+    server.tickets = [300, 300];
+    t._recordTicketSample(T0 + 61_000);
+    const sample = t.session.ticketSamples[0];
+    assert.equal(sample[5], null);
+    assert.equal(sample[6], null);
+  });
+
+  await runTest('Tickets: buildRoundStartData exposes current/start/lead', async () => {
+    const { server, t } = await mountReal();
+    server.players = [{ eosID: 'a', teamID: 1 }, { eosID: 'b', teamID: 2 }];
+    t.eloCache.set('a', { mu: 26, sigma: 3 });
+    t.session.ticketStart = [300, 300];
+    server.tickets = [280, 250];
+    assert.deepEqual(t.buildRoundStartData().tickets, { current: [280, 250], start: [300, 300], lead: 30 });
+    server.tickets = [];
+    assert.equal(t.buildRoundStartData().tickets, null);
+  });
+
+  await runTest('Tickets: scramble marks session', async () => {
+    const { t } = await mountReal();
+    await t.onTeamBalancerScramble({});
+    clearTimeout(t._scrambleEmbedTimer);
+    assert.equal(typeof t.session.scrambledAt, 'number');
   });
 }

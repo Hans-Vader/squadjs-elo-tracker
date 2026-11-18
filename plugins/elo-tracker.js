@@ -143,6 +143,7 @@ import EloSessionManager from '../utils/elo-session-manager.js';
 import EloCalculator from '../utils/elo-calculator.js';
 import { EloDiscord } from '../utils/elo-discord.js';
 import EloCommands from '../utils/elo-commands.js';
+import { isValidTickets, computeLead } from '../utils/elo-ticket-timeline.js';
 
 export default class EloTracker extends BasePlugin {
   static version = '1.3.0';
@@ -509,6 +510,48 @@ export default class EloTracker extends BasePlugin {
         // else: still within retry window but below threshold — leave pending and retry next tick
       }
     }
+
+    this._recordTicketSample();
+  }
+
+  /**
+   * Builds one live ticket sample: [sec, t1, t2, n1, n2, p1, muDelta].
+   * p1 = raw engine P(team 1 wins), muDelta = avgMu(T1) − avgMu(T2); both null if a team is empty.
+   */
+  _buildTicketSample(sec, t1, t2) {
+    const team1 = this.server.players.filter(p => p.teamID === 1);
+    const team2 = this.server.players.filter(p => p.teamID === 2);
+    if (!team1.length || !team2.length) return [sec, t1, t2, team1.length, team2.length, null, null];
+
+    const ratings = (players) => players.map(p => {
+      const { mu, sigma } = this.eloCache.get(p.eosID) ?? EloCalculator.getDefaultRating();
+      return { mu, sigma, participationRatio: 1 };
+    });
+    const p1 = EloCalculator.winProbability(ratings(team1), ratings(team2));
+    const muDelta = this._getMatchMetrics(team1).avgMu - this._getMatchMetrics(team2).avgMu;
+    return [sec, t1, t2, team1.length, team2.length, Math.round(p1 * 1000) / 1000, Math.round(muDelta * 100) / 100];
+  }
+
+  /**
+   * Appends a live ticket sample to the round session. Runs on every UPDATED_PLAYER_INFORMATION tick;
+   * skips the first 60 s (stale tickets of the previous round), throttles to one sample per 25 s and
+   * ignores invalid tickets (SquadJS before PR #452, between rounds).
+   */
+  _recordTicketSample(now = Date.now()) {
+    const { roundStartTime, ticketSamples } = this.session;
+    const tickets = this.server.tickets;
+    if (!roundStartTime || now - roundStartTime < 60_000 || !isValidTickets(tickets)) return;
+
+    const sec = Math.round((now - roundStartTime) / 1000);
+    if (ticketSamples.length && sec - ticketSamples.at(-1)[0] < 25) return;
+
+    if (!ticketSamples.length) {
+      const layerTickets = this.server.currentLayer?.tickets;
+      const validLayer = Array.isArray(layerTickets) && layerTickets.length === 2
+        && layerTickets.every(t => typeof t === 'number' && t > 0);
+      this.session.ticketStart = validLayer ? [...layerTickets] : [tickets[0], tickets[1]];
+    }
+    ticketSamples.push(this._buildTicketSample(sec, tickets[0], tickets[1]));
   }
 
   /**
@@ -529,6 +572,7 @@ export default class EloTracker extends BasePlugin {
 
   async onTeamBalancerScramble(data) {
     if (!this.ready) return;
+    this.session.scrambledAt = Date.now();
     
     Logger.verbose('EloTracker', 1, '[onTeamBalancerScramble] Event received. Waiting 5s to capture post-scramble state...');
     
@@ -985,8 +1029,17 @@ export default class EloTracker extends BasePlugin {
       flags,
       veteranLead,
       matchVeterancy,
-      totalPlayerCount: players.length
+      totalPlayerCount: players.length,
+      tickets: this._liveTickets()
     };
+  }
+
+  /** Current tickets vs. round start, or null without valid live data. */
+  _liveTickets() {
+    const start = this.session.ticketStart;
+    const current = this.server.tickets;
+    if (!start || !isValidTickets(current)) return null;
+    return { current: [...current], start, lead: computeLead([0, ...current], start) };
   }
 
   _getMatchMetrics(players) {

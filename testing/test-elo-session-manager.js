@@ -124,6 +124,13 @@ export default async function runSessionTests(runTest) {
         throw new Error(`Expected participationRatio near 0.5 for disconnected player, got ${p1Data.participationRatio}`);
       }
     });
+
+    await runTest('startRound resets ticket state', async () => {
+      const s = new EloSessionManager();
+      s.ticketStart = [1, 2]; s.ticketSamples.push([1]); s.scrambledAt = 5;
+      s.startRound(1000);
+      if (s.ticketStart !== null || s.ticketSamples.length !== 0 || s.scrambledAt !== null) throw new Error('not reset');
+    });
   } finally {
     cleanup();
   }
