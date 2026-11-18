@@ -23,6 +23,10 @@
  * Logger (../../core/logger.js)
  *   Verbose logging for command responses, lookup failures, and
  *   rcon.warn errors.
+ * EloCalculator (./elo-calculator.js)
+ *   CSR multiplier and default rating for lookups and resets.
+ * elo-ticket-timeline (./elo-ticket-timeline.js)
+ *   formatLiveStatus for the !eloadmin status favourite/ticket lines.
  *
  * ─── NOTES ───────────────────────────────────────────────────────
  *
@@ -46,6 +50,7 @@
  */
 
 import Logger from '../../core/logger.js';
+import EloCalculator from './elo-calculator.js';
 import { formatLiveStatus } from './elo-ticket-timeline.js';
 
 const SIGMA_MULTIPLIER = 3.0;

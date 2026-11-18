@@ -348,4 +348,11 @@ export default async function runTrackerTests(runTest) {
     assert.equal(captured.record.timeline.summary.partial, false);
     assert.equal(captured.timelineRows[0].partial, false);
   });
+
+  await runTest('In-game: !elo leaderboard renders CSR (EloCalculator available)', async () => {
+    const { t } = await mountReal();
+    t.db.getLeaderboard = async () => [{ name: 'Alice', mu: 30, sigma: 2, wins: 7, losses: 3 }];
+    const msg = await t.onEloCommand({ message: '!elo leaderboard', player: { name: 'A' } });
+    assert.ok(msg.includes('Alice: 24.0 7W/3L'), msg);
+  });
 }
