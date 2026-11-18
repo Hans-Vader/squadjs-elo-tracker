@@ -38,6 +38,7 @@ export async function runAll(only = null) {
     { name: 'EloSessionManager', file: './test-elo-session-manager.js' },
     { name: 'EloDatabase', file: './test-elo-database.js' },
     { name: 'EloTracker', file: './test-elo-tracker.js' },
+    { name: 'EloTicketTimeline', file: './test-elo-ticket-timeline.js' },
     { name: 'EloSimulation', file: './test-elo-simulation.js', iterations: 20 }
   ];
 
