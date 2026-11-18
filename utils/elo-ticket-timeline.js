@@ -18,6 +18,7 @@
  *   sparkline(samples, start, w)    — Lead curve as ▁▂▃▄▅▆▇█ string.
  *   aggregatePredictions(rows, t)   — Prediction stats across many rounds.
  *   parseLimit(arg)                 — Safe row limit for !elo predictions.
+ *   formatLiveStatus({...})         — Favourite + live ticket lines for admins.
  *
  * ─── NOTES ───────────────────────────────────────────────────────
  *
@@ -204,4 +205,23 @@ export function parseLimit(arg, { def = 100, max = 1000 } = {}) {
   const n = Number(arg);
   if (!Number.isInteger(n) || n < 1) return def;
   return Math.min(n, max);
+}
+
+const signed = (n) => (n > 0 ? `+${n}` : `${n}`);
+
+/**
+ * Two admin-facing lines: favourite by average μ, and live tickets vs. start.
+ * Deliberately no win percentage (see design: raw engine probability swings with headcount).
+ * @param {{ avgMu1: number, avgMu2: number, tickets: { current: number[], start: number[], lead: number } | null }} p
+ */
+export function formatLiveStatus({ avgMu1, avgMu2, tickets }) {
+  const diff = Math.abs(avgMu1 - avgMu2).toFixed(2);
+  const favourite = diff === '0.00'
+    ? 'Favourite: even (0.00μ)'
+    : `Favourite: Team ${avgMu1 > avgMu2 ? 1 : 2} (+${diff}μ)`;
+  if (!tickets) return [favourite, 'Tickets: n/a'];
+
+  const { current: [c1, c2], start: [s1, s2], lead } = tickets;
+  const leader = lead > 0 ? `Team 1 +${lead}` : lead < 0 ? `Team 2 +${-lead}` : 'even';
+  return [favourite, `Tickets: T1 ${c1} (${signed(c1 - s1)}) | T2 ${c2} (${signed(c2 - s2)}) -> ${leader}`];
 }

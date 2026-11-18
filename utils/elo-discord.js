@@ -17,7 +17,9 @@
  *       Resilient send — normalises embed/embeds, handles 429 with
  *       one automatic retry, and includes a Discord.js v12 fallback.
  *     buildRoundSummaryEmbed(data)      — Post-round results embed.
- *     buildRoundStartEmbed(data, mode)  — Pre-round team balance embed.
+ *     buildRoundStartEmbed(data, mode, { showTickets }) — Pre-round team balance embed.
+ *     buildTimelineField(summary, spark) — 'Round Timeline' field for the round-end embed.
+ *     buildPredictionsEmbed(stats, limit) — !elo predictions result embed.
  *     buildPlayerStatsEmbed(...)        — Per-player rank and stats embed.
  *     buildLeaderboardEmbed(...)        — Top-N leaderboard embed.
  *     buildAdminConfirmEmbed(...)       — Admin action confirmation embed.
@@ -63,6 +65,7 @@
 import Logger from '../../core/logger.js';
 import EloCalculator from './elo-calculator.js';
 import { extractRawPrefix, normalizeTag } from './elo-clan-grouping.js';
+import { formatLiveStatus } from './elo-ticket-timeline.js';
 
 const formatDuration = (ms) => {
   const seconds = Math.floor((ms / 1000) % 60);
@@ -496,7 +499,7 @@ export const EloDiscord = {
     };
   },
 
-  buildRoundStartEmbed(data, type = 'auto') {
+  buildRoundStartEmbed(data, type = 'auto', { showTickets = false } = {}) {
     if (data.status === 'warming') {
       return {
         color: 0x3498db,
@@ -566,7 +569,65 @@ export const EloDiscord = {
       });
     }
 
+    if (showTickets) {
+      embed.fields.push({
+        name: 'Favourite & Tickets',
+        value: formatLiveStatus({ avgMu1: t1.avgMu, avgMu2: t2.avgMu, tickets: data.tickets ?? null }).join('\n'),
+        inline: false
+      });
+    }
+
     return embed;
+  },
+
+  /**
+   * 'Round Timeline' field for the round-end embed.
+   * @param {object} s - summarizeTimeline() result plus the round's winningTeamID ({ ...summary, winningTeamID })
+   * @param {string} spark - sparkline() of the round
+   */
+  buildTimelineField(s, spark) {
+    const lines = [];
+    if (s.pStartSec != null) {
+      const head = `Favourite (min ${Math.floor(s.pStartSec / 60)}): `;
+      if (!s.favorite) {
+        lines.push(`${head}even`);
+      } else {
+        const result = [1, 2].includes(s.winningTeamID) ? `Team ${s.winningTeamID} won` : 'draw';
+        const warn = s.favoriteWon === false ? ' ⚠️' : '';
+        lines.push(`${head}Team ${s.favorite} (+${Math.abs(s.muDeltaStart).toFixed(2)}μ) → ${result}${warn}`);
+      }
+    }
+    if (spark) lines.push(`${spark}  (up = Team 1 ahead)`);
+    const maxLead = (team, lead, min) => (lead > 0 ? `${team} +${lead} (min ${min})` : `${team} —`);
+    lines.push(`Max lead: ${maxLead('T1', s.maxLeadT1, s.maxLeadT1Min)} · ${maxLead('T2', s.maxLeadT2, s.maxLeadT2Min)}`);
+    lines.push(`Lead changes: ${s.leadChanges}${s.decidedAtMin != null ? ` · decided from min ${s.decidedAtMin}` : ''}`);
+    if (s.partial) lines.push(`(partial – data from min ${s.firstSampleMin})`);
+    if (s.scrambledAtMin != null) lines.push(`Scrambled at min ${s.scrambledAtMin}`);
+    return { name: 'Round Timeline', value: lines.join('\n'), inline: false };
+  },
+
+  /** @param {object} stats - aggregatePredictions() result */
+  buildPredictionsEmbed(stats, limit) {
+    const pct = (x) => (x == null ? 'n/a' : `${Math.round(x * 100)}%`);
+    const embed = {
+      color: 0x3498db,
+      title: `📈 Prediction Check — last ${limit} rated rounds`,
+      timestamp: new Date().toISOString()
+    };
+    if (!stats.usable) return { ...embed, description: 'No timeline data yet.' };
+
+    const e = stats.excluded;
+    const margin = (b) => `${b.label}: Ø ${b.avgMargin == null ? 'n/a' : Math.round(b.avgMargin)}, dominant ${pct(b.dominantRate)}`;
+    return {
+      ...embed,
+      description: [
+        `${stats.usable} usable · excluded: ${e.scrambled} scrambled, ${e.partial} partial, ${e.noFavorite} no favourite, ${e.draw} draw`,
+        `Favourite (higher Ø μ) won: ${pct(stats.favoriteWinRate)}`,
+        `By μ diff: ${stats.byMuDelta.map(b => `${b.label}: ${pct(b.favoriteWinRate)} (n=${b.n})`).join(' · ')}`,
+        `Favourite leading (AAS/RAAS/TC): ${[10, 20, 30].map(min => `min ${min}: ${pct(stats.favoriteLeading[min])}`).join(' · ')}`,
+        `Margin by μ diff (AAS/RAAS/TC): ${stats.marginByMuDelta.map(margin).join(' · ')}`
+      ].join('\n')
+    };
   },
 
   registerDiscordCommands(tracker) {

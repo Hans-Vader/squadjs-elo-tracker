@@ -39,6 +39,7 @@ export async function runAll(only = null) {
     { name: 'EloDatabase', file: './test-elo-database.js' },
     { name: 'EloTracker', file: './test-elo-tracker.js' },
     { name: 'EloTicketTimeline', file: './test-elo-ticket-timeline.js' },
+    { name: 'EloDiscord', file: './test-elo-discord.js' },
     { name: 'EloSimulation', file: './test-elo-simulation.js', iterations: 20 }
   ];
 
