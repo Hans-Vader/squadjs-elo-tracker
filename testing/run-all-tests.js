@@ -30,7 +30,7 @@ export async function runTest(name, fn) {
 /**
  * Main runner that executes all defined test suites.
  */
-export async function runAll() {
+export async function runAll(only = null) {
   console.log(`${COLORS.CYAN}=== EloTracker Test Runner ===${COLORS.RESET}\n`);
 
   const suites = [
@@ -42,8 +42,9 @@ export async function runAll() {
   ];
 
   const results = {};
+  let failed = false;
 
-  for (const suite of suites) {
+  for (const suite of suites.filter(s => !only || s.name === only)) {
     results[suite.name] = [];
     const iterations = suite.iterations || 1;
 
@@ -60,6 +61,7 @@ export async function runAll() {
       const capturingRunTest = async (name, fn) => {
         const result = await runTest(name, fn);
         suiteRunData.tests.push({ name, passed: result.passed, error: result.error });
+        if (!result.passed) failed = true;
         return result.passed;
       };
 
@@ -80,6 +82,7 @@ export async function runAll() {
         } else {
           console.error(`${COLORS.RED}  Error loading suite:${COLORS.RESET}`, err);
         }
+        failed = true;
       }
       results[suite.name].push(suiteRunData);
       console.log('');
@@ -87,6 +90,7 @@ export async function runAll() {
   }
 
   console.log(`${COLORS.CYAN}=== All Tests Completed ===${COLORS.RESET}`);
+  if (failed) process.exitCode = 1;
 
   try {
     fs.writeFileSync('test-results.json', JSON.stringify(results, null, 2));
@@ -98,5 +102,5 @@ export async function runAll() {
 
 // Execute if run directly
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  runAll();
+  runAll(process.argv[2] || null);
 }
