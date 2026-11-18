@@ -1,10 +1,14 @@
 import assert from 'node:assert/strict';
-import { isValidTickets, summarizeTimeline, sparkline } from '../utils/elo-ticket-timeline.js';
+import { isValidTickets, summarizeTimeline, sparkline, aggregatePredictions, parseLimit } from '../utils/elo-ticket-timeline.js';
 
 // Sample tuple: [sec, t1, t2, n1, n2, p1, muDelta]
 const s = (sec, t1, t2, mu = 0.5, p = 0.6, n1 = 50, n2 = 50) => [sec, t1, t2, n1, n2, p, mu];
 // Sample with a given lead against start [300, 300]
 const L = (sec, lead) => s(sec, 300 + lead, 300);
+
+// Aggregation row with sensible defaults
+const r = (o = {}) => ({ gameMode: 'RAAS', winningTeamID: 1, pStart: 0.8, muDeltaStart: 1.0, leadEnd: 100,
+  leadAt10: 10, leadAt20: 20, leadAt30: 30, partial: false, scrambledAtMin: null, ...o });
 
 export default async function runTicketTimelineTests(runTest) {
   await runTest('isValidTickets', async () => {
@@ -73,5 +77,42 @@ export default async function runTicketTimelineTests(runTest) {
     assert.equal(sparkline(three, [300, 300]).at(-1), '█');
     assert.equal(new Set(sparkline([L(60, 0), L(120, 0)], [300, 300])).size, 1);
     assert.equal(sparkline(Array.from({ length: 100 }, (_, i) => L(60 + i * 30, i)), [300, 300]).length, 24);
+  });
+
+  await runTest('aggregate: exclusions, first reason wins', async () => {
+    const ex = aggregatePredictions([r({ partial: true, scrambledAtMin: 20 }), r({ scrambledAtMin: 20 }), r({ muDeltaStart: 0 }),
+      r({ muDeltaStart: null }), r({ winningTeamID: null }), r()]);
+    assert.deepEqual([ex.total, ex.usable, ex.excluded], [6, 1, { partial: 1, scrambled: 1, noFavorite: 2, draw: 1 }]);
+  });
+
+  await runTest('aggregate: favourite win rate and μ buckets', async () => {
+    const mu = aggregatePredictions([r({ muDeltaStart: 1.49 }), r({ muDeltaStart: -1.5 }), r({ muDeltaStart: 3.0 }),
+      r({ muDeltaStart: 2.9, winningTeamID: 2 })]);
+    assert.equal(mu.favoriteWinRate, 0.5);
+    assert.deepEqual(mu.byMuDelta, [{ label: '<1.5', n: 1, favoriteWinRate: 1 }, { label: '1.5–3', n: 2, favoriteWinRate: 0 },
+      { label: '≥3', n: 1, favoriteWinRate: 1 }]);
+  });
+
+  await runTest('aggregate: ticket stats only for symmetric modes', async () => {
+    const tk = aggregatePredictions([r({ gameMode: 'Invasion', leadEnd: 400, leadAt10: -50 }), r({ gameMode: 'AAS', leadEnd: 200, leadAt10: 5 }),
+      r({ gameMode: 'TC', muDeltaStart: -1, winningTeamID: 2, leadEnd: -100, leadAt10: 10 })]);
+    assert.equal(tk.favoriteLeading[10], 0.5);
+    assert.deepEqual(tk.marginByMuDelta[0], { label: '<1.5', n: 2, avgMargin: 150, dominantRate: 0.5 });
+  });
+
+  await runTest('aggregate: engine table', async () => {
+    const en = aggregatePredictions([r({ pStart: 0.65 }), r({ pStart: 0.2 }), r({ pStart: 0.95 }), r({ pStart: null })]);
+    assert.deepEqual(en.engine.map(b => [b.label, b.n, b.actualRate]), [['50–70%', 1, 1], ['70–90%', 1, 0], ['90%+', 1, 1]]);
+    assert.ok(Math.abs(en.engine[1].avgP - 0.8) < 1e-9);
+    assert.equal(en.usable, 4);
+  });
+
+  await runTest('aggregate: empty input', async () => {
+    const em = aggregatePredictions([]);
+    assert.deepEqual([em.usable, em.favoriteWinRate, em.byMuDelta[0].favoriteWinRate, em.favoriteLeading[30]], [0, null, null, null]);
+  });
+
+  await runTest('parseLimit', async () => {
+    assert.deepEqual([undefined, 'abc', '0', '-5', '50', '99999', '2.5'].map(v => parseLimit(v)), [100, 100, 100, 100, 50, 1000, 100]);
   });
 }

@@ -16,6 +16,8 @@
  *   computeLead(sample, start)      — Lead of team 1 (ticket loss based).
  *   summarizeTimeline(...)          — Per-round summary or null.
  *   sparkline(samples, start, w)    — Lead curve as ▁▂▃▄▅▆▇█ string.
+ *   aggregatePredictions(rows, t)   — Prediction stats across many rounds.
+ *   parseLimit(arg)                 — Safe row limit for !elo predictions.
  *
  * ─── NOTES ───────────────────────────────────────────────────────
  *
@@ -124,4 +126,82 @@ export function sparkline(samples, startTickets, width = 24) {
   return means
     .map(lead => SPARK_CHARS[M === 0 ? 4 : Math.min(7, Math.floor((lead + M) / (2 * M) * 8))])
     .join('');
+}
+
+const rate = (hits, n) => (n ? hits / n : null);
+const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
+
+/**
+ * Prediction statistics over per-round summary rows (DB rows or match-log summaries).
+ * Row: { gameMode, winningTeamID, pStart, muDeltaStart, leadEnd, leadAt10/20/30, partial, scrambledAtMin }
+ * Each round is excluded at most once: partial → scrambled → noFavorite → draw.
+ */
+export function aggregatePredictions(rows, { troublingDelta = 1.5, criticalDelta = 3.0, dominantMargin = 150 } = {}) {
+  const excluded = { partial: 0, scrambled: 0, noFavorite: 0, draw: 0 };
+  const usable = [];
+  for (const row of rows) {
+    if (row.partial) excluded.partial++;
+    else if (row.scrambledAtMin != null) excluded.scrambled++;
+    else if (!row.muDeltaStart) excluded.noFavorite++;
+    else if (![1, 2].includes(row.winningTeamID)) excluded.draw++;
+    else {
+      const favorite = row.muDeltaStart > 0 ? 1 : 2;
+      usable.push({ ...row, favorite, won: favorite === row.winningTeamID, sign: favorite === 1 ? 1 : -1 });
+    }
+  }
+
+  const muBuckets = [
+    { label: `<${troublingDelta}`, test: d => d < troublingDelta },
+    { label: `${troublingDelta}–${criticalDelta}`, test: d => d >= troublingDelta && d < criticalDelta },
+    { label: `≥${criticalDelta}`, test: d => d >= criticalDelta }
+  ];
+  const inMu = (b) => (x) => b.test(Math.abs(x.muDeltaStart));
+  const symmetric = usable.filter(x => SYMMETRIC_MODES.includes(x.gameMode));
+
+  const favoriteLeading = {};
+  for (const min of [10, 20, 30]) {
+    const withLead = symmetric.filter(x => x[`leadAt${min}`] != null);
+    favoriteLeading[min] = rate(withLead.filter(x => x[`leadAt${min}`] * x.sign > 0).length, withLead.length);
+  }
+
+  const engineRows = usable
+    .filter(x => x.pStart != null)
+    .map(x => ({ c: Math.max(x.pStart, 1 - x.pStart), won: (x.pStart >= 0.5 ? 1 : 2) === x.winningTeamID }));
+  const engineBuckets = [
+    { label: '50–70%', test: c => c < 0.7 },
+    { label: '70–90%', test: c => c >= 0.7 && c < 0.9 },
+    { label: '90%+', test: c => c >= 0.9 }
+  ];
+
+  return {
+    total: rows.length,
+    usable: usable.length,
+    excluded,
+    favoriteWinRate: rate(usable.filter(x => x.won).length, usable.length),
+    byMuDelta: muBuckets.map(b => {
+      const xs = usable.filter(inMu(b));
+      return { label: b.label, n: xs.length, favoriteWinRate: rate(xs.filter(x => x.won).length, xs.length) };
+    }),
+    favoriteLeading,
+    marginByMuDelta: muBuckets.map(b => {
+      const margins = symmetric.filter(inMu(b)).map(x => Math.abs(x.leadEnd));
+      return {
+        label: b.label,
+        n: margins.length,
+        avgMargin: mean(margins),
+        dominantRate: rate(margins.filter(m => m >= dominantMargin).length, margins.length)
+      };
+    }),
+    engine: engineBuckets.map(b => {
+      const xs = engineRows.filter(x => b.test(x.c));
+      return { label: b.label, n: xs.length, avgP: mean(xs.map(x => x.c)), actualRate: rate(xs.filter(x => x.won).length, xs.length) };
+    })
+  };
+}
+
+/** Positive integer limit from a chat argument; falls back to `def`, capped at `max`. */
+export function parseLimit(arg, { def = 100, max = 1000 } = {}) {
+  const n = Number(arg);
+  if (!Number.isInteger(n) || n < 1) return def;
+  return Math.min(n, max);
 }
