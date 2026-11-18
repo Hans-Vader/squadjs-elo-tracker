@@ -26,6 +26,8 @@
  * - lead = (t1 − s1) − (t2 − s2); positive = team 1 ahead. Normalised
  *   on ticket loss so asymmetric start tickets compare fairly.
  * - Minutes are Math.floor(sec / 60).
+ * - partial = the first sample is more than one tick (35 s) after pStartSec,
+ *   i.e. the start of the round is missing (e.g. restart mid-round).
  *
  * ═══════════════════════════════════════════════════════════════
  */
@@ -33,6 +35,8 @@
 export const SYMMETRIC_MODES = ['AAS', 'RAAS', 'TC'];
 
 const LEAD_HYSTERESIS = 10;
+// Samples arrive on a ~30 s tick; the first one may land up to one tick (+ RCON jitter) after pStartSec.
+const SAMPLE_TOLERANCE_SEC = 35;
 const SPARK_CHARS = '▁▂▃▄▅▆▇█';
 
 const toMin = (sec) => Math.floor(sec / 60);
@@ -105,7 +109,7 @@ export function summarizeTimeline(samples, startTickets, winningTeamID, { pStart
     leadAt10: leadAt(10),
     leadAt20: leadAt(20),
     leadAt30: leadAt(30),
-    partial: samples[0][0] > pStartSec,
+    partial: samples[0][0] > pStartSec + SAMPLE_TOLERANCE_SEC,
     firstSampleMin: toMin(samples[0][0]),
     scrambledAtMin: scrambledAtSec != null && scrambledAtSec > pStartSec ? toMin(scrambledAtSec) : null
   };

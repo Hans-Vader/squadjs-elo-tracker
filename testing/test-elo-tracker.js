@@ -335,4 +335,17 @@ export default async function runTrackerTests(runTest) {
     assert.ok(msg.includes('Favourite: Team 1 (+1.00μ)'), msg);
     assert.ok(msg.includes('Tickets: T1 280 (-20) | T2 250 (-50) -> Team 1 +30'), msg);
   });
+
+  await runTest('ROUND_ENDED: short start-embed delay does not mark rounds partial', async () => {
+    const { server, t, captured } = await mountRoundEnd();
+    t.options.roundStartEmbedDelayMs = 30_000;
+    t.session.startRound(Date.now() - 20 * 60_000);
+    server.tickets = [300, 300];
+    t._recordTicketSample(t.session.roundStartTime + 75_000); // first ~30 s tick after the 60 s guard
+    server.tickets = [250, 200];
+    t._recordTicketSample(t.session.roundStartTime + 105_000);
+    await server.emit('ROUND_ENDED', { winner: { team: '1', tickets: '120' }, loser: { team: '2', tickets: '0' } });
+    assert.equal(captured.record.timeline.summary.partial, false);
+    assert.equal(captured.timelineRows[0].partial, false);
+  });
 }
