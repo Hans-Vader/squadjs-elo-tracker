@@ -46,6 +46,7 @@
  */
 
 import Logger from '../../core/logger.js';
+import { formatLiveStatus } from './elo-ticket-timeline.js';
 
 const SIGMA_MULTIPLIER = 3.0;
 
@@ -171,13 +172,18 @@ const EloCommands = {
       if (sub === 'status') {
         const sessionCount = this.session.getSessionCount();
         const cacheCount = this.eloCache.size;
+        const d = this.buildRoundStartData();
+        const live = d.t1
+          ? formatLiveStatus({ avgMu1: d.t1.avgMu, avgMu2: d.t2.avgMu, tickets: d.tickets })
+          : ['Favourite: n/a', 'Tickets: n/a'];
         return await this.respond(player, [
           '=== EloTracker Status ===',
           `Version: ${this.constructor.version}`,
           `Ready: ${this.ready}`,
           `Session players: ${sessionCount}`,
           `ELO cache entries: ${cacheCount}`,
-          `Round start: ${this.session.roundStartTime ? new Date(this.session.roundStartTime).toISOString() : 'None'}`
+          `Round start: ${this.session.roundStartTime ? new Date(this.session.roundStartTime).toISOString() : 'None'}`,
+          ...live
         ].join('\n'));
       }
 

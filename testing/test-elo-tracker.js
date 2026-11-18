@@ -302,4 +302,37 @@ export default async function runTrackerTests(runTest) {
     t.options.roundStartEmbedDelayMs = 30_000;
     assert.equal(t._ticketPStartSec(), 60);
   });
+
+  await runTest('Discord: !elo predictions passes parsed limit and replies with embed', async () => {
+    const { t } = await mountReal();
+    t.options.discordAdminChannelID = 'adm';
+    t.discordAdminChannel = { id: 'adm' };
+    t.options.discordAdminRoleIDs = [];
+    let asked;
+    t.db.getRecentRoundTimelines = async (n) => { asked = n; return []; };
+    const sent = [];
+    const channel = { id: 'adm', send: async (p) => sent.push(p) };
+    await t.onDiscordMessage({ author: { bot: false }, content: '!elo predictions abc', channel, member: null, reply: async () => {} });
+    assert.equal(asked, 100);
+    assert.ok(sent[0].embeds[0].title.startsWith('📈 Prediction Check — last 100'));
+
+    await t.onDiscordMessage({ author: { bot: false }, content: '!elo predictions 99999', channel, member: null, reply: async () => {} });
+    assert.equal(asked, 1000);
+
+    t.db.getRecentRoundTimelines = async () => { throw new Error('db down'); };
+    await t.onDiscordMessage({ author: { bot: false }, content: '!elo predictions', channel, member: null, reply: async () => {} });
+    assert.ok(sent.at(-1).embeds[0].title.includes('Predictions'));
+  });
+
+  await runTest('In-game: !eloadmin status includes favourite and tickets', async () => {
+    const { server, t } = await mountReal();
+    server.players = [{ eosID: 'a', teamID: 1 }, { eosID: 'b', teamID: 2 }];
+    t.eloCache.set('a', { mu: 26, sigma: 3 });
+    t.eloCache.set('b', { mu: 25, sigma: 3 });
+    server.tickets = [280, 250];
+    t.session.ticketStart = [300, 300];
+    const msg = await t.onEloAdminCommand({ chat: 'ChatAdmin', message: '!eloadmin status', player: { name: 'A' } });
+    assert.ok(msg.includes('Favourite: Team 1 (+1.00μ)'), msg);
+    assert.ok(msg.includes('Tickets: T1 280 (-20) | T2 250 (-50) -> Team 1 +30'), msg);
+  });
 }

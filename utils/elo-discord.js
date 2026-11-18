@@ -49,7 +49,7 @@
  * - registerDiscordCommands() mutates the tracker instance. It relies
  *   on tracker.db, tracker.session, tracker.eloCache, tracker.options,
  *   tracker.discordAdminChannel, and tracker.discordPublicChannel.
- * - Admin commands (!elo reset, backup, restore, status, roundinfo) are
+ * - Admin commands (!elo reset, backup, restore, status, roundinfo, predictions) are
  *   gated to discordAdminChannelID. Public commands are gated to
  *   discordPublicChannelID. Messages outside both channels are ignored.
  * - !elo reset (full wipe) requires a two-step confirm with a 30s
@@ -65,7 +65,7 @@
 import Logger from '../../core/logger.js';
 import EloCalculator from './elo-calculator.js';
 import { extractRawPrefix, normalizeTag } from './elo-clan-grouping.js';
-import { formatLiveStatus } from './elo-ticket-timeline.js';
+import { formatLiveStatus, parseLimit, aggregatePredictions } from './elo-ticket-timeline.js';
 
 const formatDuration = (ms) => {
   const seconds = Math.floor((ms / 1000) % 60);
@@ -661,7 +661,7 @@ export const EloDiscord = {
 
       // --- Admin-only commands (admin channel only, checked first) ---
       if (isAdminChannel) {
-        const adminCommands = ['status', 'roundinfo', 'reset', 'backup', 'restore'];
+        const adminCommands = ['status', 'roundinfo', 'predictions', 'reset', 'backup', 'restore'];
         if (adminCommands.includes(sub) && !hasAdminRole) {
            await message.reply('❌ You do not have permission to use this command.');
            return;
@@ -703,10 +703,22 @@ export const EloDiscord = {
         if (sub === 'roundinfo') {
           try {
             const data = this.buildRoundStartData(); 
-            const embed = EloDiscord.buildRoundStartEmbed(data, 'manual');
+            const embed = EloDiscord.buildRoundStartEmbed(data, 'manual', { showTickets: true });
             await EloDiscord.sendDiscordMessage(message.channel, { embeds: [embed] });
           } catch (err) {
             await EloDiscord.sendDiscordMessage(message.channel, { embeds: [EloDiscord.buildErrorEmbed('Round Info', err)] });
+          }
+          return;
+        }
+
+        if (sub === 'predictions') {
+          try {
+            const limit = parseLimit(args[1]);
+            const rows = await this.db.getRecentRoundTimelines(limit);
+            const stats = aggregatePredictions(rows, this.thresholds);
+            await EloDiscord.sendDiscordMessage(message.channel, { embeds: [EloDiscord.buildPredictionsEmbed(stats, limit)] });
+          } catch (err) {
+            await EloDiscord.sendDiscordMessage(message.channel, { embeds: [EloDiscord.buildErrorEmbed('Predictions', err)] });
           }
           return;
         }
@@ -715,7 +727,7 @@ export const EloDiscord = {
           const identifier = args.slice(1).join(' ');
 
           if (!identifier) {
-            await message.reply('⚠️ This will wipe ALL ELO ratings and round history. Reply `!elo reset confirm` within 30 seconds to proceed.');
+            await message.reply('⚠️ This will wipe ALL ELO ratings, round history and timelines. Reply `!elo reset confirm` within 30 seconds to proceed.');
             this._resetConfirmPending = { timestamp: Date.now() };
             return;
           }
@@ -750,8 +762,9 @@ export const EloDiscord = {
 
               await this.db.models.PlayerStats.destroy({ where: {} });
               await this.db.models.RoundHistory.destroy({ where: {} });
+              await this.db.models.RoundTimeline.destroy({ where: {} });
               this.eloCache.clear();
-              await EloDiscord.sendDiscordMessage(message.channel, { embeds: [EloDiscord.buildAdminConfirmEmbed('ELO Reset', 'All ratings and round history wiped.')] });
+              await EloDiscord.sendDiscordMessage(message.channel, { embeds: [EloDiscord.buildAdminConfirmEmbed('ELO Reset', 'All ratings, round history and timelines wiped.')] });
             } catch (err) {
               await EloDiscord.sendDiscordMessage(message.channel, { embeds: [EloDiscord.buildErrorEmbed('ELO Reset', err)] });
             }
@@ -938,9 +951,10 @@ export const EloDiscord = {
               name: '🛡️ Admin Commands (admin channel only)',
               value: [
                 '`!elo status` — Plugin status and current round info',
-                '`!elo roundinfo` — Live round snapshot: team balance, veterancy, and match health',
+                '`!elo roundinfo` — Live round snapshot: team balance, veterancy, match health, favourite and tickets',
+                '`!elo predictions [n]` — How well team strength predicted the last n rated rounds (default 100)',
                 '`!elo clans [n|all]` — Advanced clan leaderboard (n up to 50, "all" for all tags)',
-                '`!elo reset` — Wipe ALL ratings and round history (requires confirm)',
+                '`!elo reset` — Wipe ALL ratings, round history and timelines (requires confirm)',
                 '`!elo reset confirm` — Confirm a pending full reset',
                 '`!elo reset <identifier>` — Reset a single player to default rating',
                 '`!elo backup` — Export all player stats as a JSON file attachment',
