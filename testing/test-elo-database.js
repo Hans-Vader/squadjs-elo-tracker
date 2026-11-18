@@ -73,4 +73,17 @@ export default async function runDatabaseTests(runTest) {
     if (result !== 'success') throw new Error('Retry logic failed to return result');
     if (attempts !== 2) throw new Error(`Expected 2 attempts (1 fail + 1 retry), got ${attempts}`);
   });
+
+  await runTest('RoundTimeline: insert and fetch newest first', async () => {
+    if (!db.models.RoundTimeline) throw new Error('RoundTimeline model missing');
+    const base = { roundHistoryId: 1, layerName: 'L', gameMode: 'RAAS', winningTeamID: 1, pStart: 0.71, muDeltaStart: 0.4,
+      leadEnd: 120, maxLeadT1: 130, maxLeadT2: 20, leadChanges: 1, decidedAtMin: 30, leadAt10: 5, leadAt20: 40, leadAt30: 90,
+      partial: false, scrambledAtMin: null };
+    await db.insertRoundTimeline({ ...base, endedAt: 1000 });
+    await db.insertRoundTimeline({ ...base, endedAt: 2000, partial: true });
+    const rows = await db.getRecentRoundTimelines(1);
+    if (rows.length !== 1 || rows[0].endedAt != 2000) throw new Error(`unexpected ${JSON.stringify(rows)}`);
+    if (rows[0].partial !== true) throw new Error('partial must be boolean true');
+    if (Math.abs(rows[0].pStart - 0.71) > 1e-6) throw new Error('pStart roundtrip');
+  });
 }

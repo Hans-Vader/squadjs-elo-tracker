@@ -21,6 +21,8 @@
  *     upsertPlayerStats(eosID, fields) — Single-record upsert.
  *     bulkIncrementPlayerStats(updates) — Batch increment in one transaction.
  *     insertRoundHistory(data)         — Append a round record.
+ *     insertRoundTimeline(row)         — Append a ticket timeline summary row.
+ *     getRecentRoundTimelines(limit)   — Newest timeline rows first.
  *     getLeaderboard(limit, minRounds, offset) — Top players by CSR, with optional offset.
  *     getPlayerRank(consRating, minRounds) — Rank of a given CSR value.
  *     getTotalRankedPlayers(minRounds) — Count of players meeting the minimum rounds threshold.
@@ -294,6 +296,33 @@ export default class EloDatabase {
          { timestamps: false, tableName: 'Elo_RoundPlayers', charset: 'utf8mb4', collate: 'utf8mb4_unicode_ci' }
        );
 
+      // One summary row per rated round with live ticket data (see utils/elo-ticket-timeline.js)
+      const col = (type, allowNull = true) => ({ type, allowNull });
+      this.models.RoundTimeline = this.sequelize.define(
+        'Elo_RoundTimeline',
+        {
+          id: { type: Sequelize.INTEGER, primaryKey: true, autoIncrement: true },
+          roundHistoryId: col(Sequelize.INTEGER),
+          endedAt: col(Sequelize.BIGINT, false),
+          layerName: col(Sequelize.STRING),
+          gameMode: col(Sequelize.STRING),
+          winningTeamID: col(Sequelize.INTEGER),
+          pStart: col(Sequelize.FLOAT),
+          muDeltaStart: col(Sequelize.FLOAT),
+          leadEnd: col(Sequelize.INTEGER),
+          maxLeadT1: col(Sequelize.INTEGER),
+          maxLeadT2: col(Sequelize.INTEGER),
+          leadChanges: col(Sequelize.INTEGER),
+          decidedAtMin: col(Sequelize.INTEGER),
+          leadAt10: col(Sequelize.INTEGER),
+          leadAt20: col(Sequelize.INTEGER),
+          leadAt30: col(Sequelize.INTEGER),
+          partial: col(Sequelize.BOOLEAN, false),
+          scrambledAtMin: col(Sequelize.INTEGER)
+        },
+        { timestamps: false, tableName: 'Elo_RoundTimeline', indexes: [{ fields: ['endedAt'] }] }
+      );
+
        await this._executeWithRetry(async () => {
           // SQLite-only: PRAGMA commands are not supported on MySQL/Postgres
           if (this.sequelize.getDialect() === 'sqlite') {
@@ -306,6 +335,7 @@ export default class EloDatabase {
            await this.models.PlayerStats.sync();
            await this.models.RoundHistory.sync();
            await this.models.RoundPlayers.sync();
+           await this.models.RoundTimeline.sync();
         });
 
       // Log PlayerStats row count on startup to detect silent table recreations
@@ -703,5 +733,24 @@ export default class EloDatabase {
       Logger.verbose('EloTracker', 1, `[DB] insertRoundPlayers failed: ${error.message}`);
       return null;
     }
+  }
+
+  async insertRoundTimeline(row) {
+    if (!this.sequelize || !this.models.RoundTimeline) return null;
+    try {
+      return await this._executeWithRetry(async () => (await this.models.RoundTimeline.create(row)).toJSON());
+    } catch (error) {
+      Logger.verbose('EloTracker', 1, `[DB] insertRoundTimeline failed: ${error.message}`);
+      return null;
+    }
+  }
+
+  /** Newest rows first (by endedAt). */
+  async getRecentRoundTimelines(limit) {
+    if (!this.sequelize || !this.models.RoundTimeline) return [];
+    return await this._executeWithRetry(async () => {
+      const records = await this.models.RoundTimeline.findAll({ order: [['endedAt', 'DESC']], limit });
+      return records.map(r => r.get({ plain: true }));
+    });
   }
 }
