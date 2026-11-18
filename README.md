@@ -1,4 +1,6 @@
-# EloTracker Plugin v1.3.0
+# EloTracker Plugin v1.4.0
+
+> ⚠️ **Requires the latest SquadJS.** Live ticket features need the current `master` of Team-Silver-Sphere/SquadJS (at least commit `dc1ba3e`, PR #452, 2026-10-04). The last release, v4.2.0, does **not** contain the ticket fix. On older versions, ticket timelines stay off and the plugin logs a hint once; ratings work normally.
 
 **SquadJS Plugin for Skill-Based Player Rating**
 
@@ -15,6 +17,7 @@ Designed for Squad servers to surface skill data, reward consistent players, and
 * **TrueSkill Rating Engine:** Implements the full TrueSkill algorithm with team-based win, loss, and draw outcomes.
 * **Participation Weighting:** Rating changes are scaled by how long a player was actually on their team. Late joiners and early leavers receive proportionally smaller adjustments.
 * **Team-Switch Tracking:** Segment-based session tracking detects mid-round team switches. Players are assigned to the team they spent the most time on.
+* **Live Tickets & Round Timeline:** Records both teams' tickets every 30 s during rated rounds. Admins see the favourite (higher average μ) and the live ticket lead in `!elo roundinfo` and `!eloadmin status`. The round-end embed tells the round's story (favourite vs. winner, max lead, lead changes, when it was decided), and `!elo predictions` shows how well team strength predicted recent rounds. No win percentages are shown live.
 * **Match Health Metrics:** Live tracking of skill balance, regular player parity, and Top 15 player averages to assess team fairness.
 * **Discord Integration:** Full-featured Discord bot interface for player lookups, leaderboards, and account linking.
 * **In-Game Commands:** Players can check their own rating and view the leaderboard directly from the in-game chat.
@@ -66,6 +69,8 @@ No additional configuration is needed on the EloTracker side. TeamBalancer finds
 ---
 
 ## Installation
+
+> ⚠️ **Requires the latest SquadJS.** Live ticket features need the current `master` of Team-Silver-Sphere/SquadJS (at least commit `dc1ba3e`, PR #452, 2026-10-04). The last release, v4.2.0, does **not** contain the ticket fix. On older versions, ticket timelines stay off and the plugin logs a hint once; ratings work normally.
 
 ### 1. Configuration
 
@@ -135,7 +140,8 @@ squad-server/
     ├── elo-commands.js
     ├── elo-database.js
     ├── elo-discord.js
-    └── elo-session-manager.js
+    ├── elo-session-manager.js
+    └── elo-ticket-timeline.js
 ```
 
 ---
@@ -146,6 +152,15 @@ squad-server/
 
 - `node tools/elo-clans-audit.js [path/to/db.json]` — Generates a report (`tools/clan-audit.txt`) testing the tag extraction and normalization logic against a database export. Useful for finding unhandled clan tag variations.
 - `node tools/elo-inspect.js <rebuilt.json>` — Interactive CLI tool mimicking Discord commands for local testing and DB inspection.
+- `node tools/elo-predictions.js <matchlog.jsonl>` — Prediction statistics from the ticket timelines in the match log, overall and per game mode, including the raw TrueSkill engine table.
+
+### Running Tests
+
+Requires Node ≥ 18.19. A loader stubs the SquadJS-only modules, so the tests run outside a SquadJS checkout:
+
+```
+node --import ./testing/stubs/register.mjs testing/run-all-tests.js [SuiteName]
+```
 
 ### In-Game Commands
 
@@ -158,7 +173,7 @@ squad-server/
 
 **Admin (ChatAdmin channel only):**
 
-- `!eloadmin status` — Plugin status, session count, and round info.
+- `!eloadmin status` — Plugin status, session count, round info, favourite and live tickets.
 - `!eloadmin reset <name | steamID>` — Reset a player to default rating.
 
 ### Discord Commands
@@ -176,11 +191,12 @@ squad-server/
 **Admin (admin channel only):**
 
 - `!elo status` — Plugin diagnostics and cache state.
-- `!elo roundinfo` — Live snapshot of team balance.
+- `!elo roundinfo` — Live snapshot of team balance, including favourite and live tickets.
+- `!elo predictions [n]` — How well team strength predicted the last n rated rounds (default 100, max 1000).
 - `!elo clans [n|all]` — Advanced clan leaderboard (n up to 50, "all" for all tags).
 - `!elo backup` — Export player stats as JSON.
 - `!elo restore` — Restore from an attached JSON backup.
-- `!elo reset confirm` — Wipe **ALL** database ratings.
+- `!elo reset confirm` — Wipe **ALL** database ratings, round history and ticket timelines.
 
 ---
 

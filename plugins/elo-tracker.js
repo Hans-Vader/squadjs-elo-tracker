@@ -36,6 +36,8 @@
  *   Discord embed builders, send helper, and Discord command registration.
  * EloCommands (../utils/elo-commands.js)
  *   In-game chat command handlers for !elo and !eloadmin.
+ * elo-ticket-timeline (../utils/elo-ticket-timeline.js)
+ *   Pure helpers for live tickets: validation, round summary, sparkline, prediction stats.
  *
  * ─── NOTES ───────────────────────────────────────────────────────
  *
@@ -51,6 +53,11 @@
  *   (case-insensitive substring). Default: ["Seed", "Jensen"].
  * - The round start embed posts after roundStartEmbedDelayMs (default 3 min)
  *   via a deferred check on UPDATED_PLAYER_INFORMATION.
+ * - Live tickets: _recordTicketSample() samples server.tickets on every
+ *   UPDATED_PLAYER_INFORMATION tick (~30 s) into session.ticketSamples.
+ *   ROUND_ENDED summarises them into the match log, Elo_RoundTimeline and
+ *   the round-end embed. Needs SquadJS master ≥ dc1ba3e (PR #452); older
+ *   versions deliver no tickets → no timelines, one hint log per process.
  *
  * ─── COMMANDS ────────────────────────────────────────────────────
  *
@@ -75,8 +82,9 @@
  *
  * Discord — Admin (admin channel only):
  *   !elo status                    → Plugin status and current round info.
- *   !elo roundinfo                 → Live round snapshot: team balance and veterancy.
- *   !elo reset                     → Wipe ALL ratings + history (requires confirm).
+ *   !elo roundinfo                 → Live round snapshot: team balance, veterancy, favourite, tickets.
+ *   !elo predictions [n]           → Prediction check over the last n rated rounds (default 100).
+ *   !elo reset                     → Wipe ALL ratings + history + timelines (requires confirm).
  *   !elo reset confirm             → Confirm a pending full reset.
  *   !elo reset <name|steamID>      → Reset a single player to default rating.
  *   !elo backup                    → Export all player stats as a JSON attachment.
@@ -146,7 +154,7 @@ import EloCommands from '../utils/elo-commands.js';
 import { isValidTickets, computeLead, summarizeTimeline, sparkline } from '../utils/elo-ticket-timeline.js';
 
 export default class EloTracker extends BasePlugin {
-  static version = '1.3.0';
+  static version = '1.4.0';
 
   static get description() {
     return 'A SquadJS plugin that tracks player participation across rounds, computes individual ELO ratings using a TrueSkill-based algorithm, and persists all data via Sequelize-compatible databases (SQLite, MySQL, PostgreSQL, etc.).';
