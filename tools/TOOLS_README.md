@@ -34,6 +34,12 @@ Interactive CLI tool to query players, view local leaderboards, analyse spread d
 node elo-inspect.js <rebuilt.json> [old-backup.json] [matchlog.jsonl]
 ```
 
+**`elo-predictions.js`**
+Evaluates how well team strength predicted rounds, using the ticket timelines in the match log (EloTracker ≥ 1.4.0 on a SquadJS with live tickets). Prints the `!elo predictions` statistics overall and per game mode, plus the raw TrueSkill engine table (pStart confidence vs. actual win rate).
+```
+node elo-predictions.js <matchlog.jsonl>
+```
+
 **`elo-rebuild.js`**
 Replays all recorded matches from scratch using the current TrueSkill formula. Outputs a restore-compatible JSON backup. Useful after formula corrections.
 ```
